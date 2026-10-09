@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS usuarios (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    nome VARCHAR(150) NOT NULL,
+    email VARCHAR(254) NOT NULL,
+    senha_hash VARCHAR(255) NOT NULL,
+    acesso ENUM('administrador', 'convidado') NOT NULL DEFAULT 'convidado',
+    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_usuarios_email (email)
+);
