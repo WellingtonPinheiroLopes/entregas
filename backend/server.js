@@ -6,7 +6,7 @@ const db = require('./src/db');
 const { createApp } = require('./app');
 const app = createApp({ db });
 const PORT = Number(process.env.PORT) || 3000;
-const HOST = process.env.HOST || '127.0.0.1';
+const HOST = process.env.HOST || '0.0.0.0';
 const server = app.listen(PORT, HOST, () => console.log(`Servidor iniciado em http://${HOST}:${PORT}`));
 
 server.on('error', (error) => {

@@ -21,5 +21,38 @@ services:
       retries: 10
       start_period: 30s
 
+  backend:
+    build:
+      context: ./backend
+    container_name: entregas-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORT: 3000
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      SESSION_SECRET: ${SESSION_SECRET}
+      SESSION_MAX_AGE_MS: ${SESSION_MAX_AGE_MS}
+      FRONTEND_ORIGIN: http://localhost:8080
+      LOGIN_RATE_WINDOW_MS: ${LOGIN_RATE_WINDOW_MS}
+      LOGIN_RATE_LIMIT: ${LOGIN_RATE_LIMIT}
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: entregas-frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - backend
+
 volumes:
   mysql_data:
