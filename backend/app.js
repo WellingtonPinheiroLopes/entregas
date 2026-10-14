@@ -184,6 +184,65 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
     }
   });
 
+  app.get('/api/usuarios/:id', authenticate, requireAccess('administrador'), async (req, res, next) => {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ erro: 'Identificador inválido.' });
+    try {
+      const [rows] = await db.execute(`SELECT ${PUBLIC_USER} FROM usuarios WHERE id = ? LIMIT 1`, [req.params.id]);
+      if (!rows[0]) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+      res.set('Cache-Control', 'no-store').json({ usuario: rows[0] });
+    } catch (error) { next(error); }
+  });
+
+  app.patch('/api/usuarios/:id', csrfGuard, authenticate, requireAccess('administrador'), async (req, res, next) => {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ erro: 'Identificador inválido.' });
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    if (Object.keys(body).some((key) => !['nome', 'email', 'acesso'].includes(key))) return res.status(400).json({ erro: 'Envie somente nome, e-mail e tipo de acesso.' });
+    const nome = typeof body.nome === 'string' ? body.nome.trim() : '';
+    const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+    const acesso = body.acesso;
+    if (!nome || nome.length > 150) return res.status(400).json({ erro: 'Informe um nome com até 150 caracteres.' });
+    if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ erro: 'Informe um e-mail válido.' });
+    if (!['administrador', 'convidado'].includes(acesso)) return res.status(400).json({ erro: 'Tipo de acesso inválido.' });
+    try {
+      const connection = typeof db.getConnection === 'function' ? await db.getConnection() : null;
+      if (connection) await connection.beginTransaction();
+      const executor = connection || db;
+      try {
+        const [targetRows] = await executor.execute(`SELECT ${PUBLIC_USER} FROM usuarios WHERE id = ? LIMIT 1 FOR UPDATE`, [req.params.id]);
+        const target = targetRows[0];
+        if (!target) { if (connection) await connection.rollback(); return res.status(404).json({ erro: 'Usuário não encontrado.' }); }
+        if (target.acesso === 'administrador' && acesso !== 'administrador') {
+          const [admins] = await executor.execute("SELECT id FROM usuarios WHERE acesso = 'administrador' FOR UPDATE");
+          if (admins.length <= 1) { if (connection) await connection.rollback(); return res.status(409).json({ erro: 'Não é possível rebaixar o último administrador ativo.' }); }
+        }
+        await executor.execute('UPDATE usuarios SET nome = ?, email = ?, acesso = ? WHERE id = ?', [nome, email, acesso, req.params.id]);
+        if (connection) await connection.commit();
+        const [rows] = await db.execute(`SELECT ${PUBLIC_USER} FROM usuarios WHERE id = ? LIMIT 1`, [req.params.id]);
+        res.set('Cache-Control', 'no-store').json({ usuario: rows[0], mensagem: 'Usuário atualizado com sucesso.' });
+      } catch (error) { if (connection) await connection.rollback(); throw error; }
+      finally { if (connection) connection.release(); }
+    } catch (error) {
+      if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ erro: 'Já existe um usuário com este e-mail.' });
+      next(error);
+    }
+  });
+
+  app.patch('/api/usuarios/:id/password', csrfGuard, authenticate, requireAccess('administrador'), async (req, res, next) => {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ erro: 'Identificador inválido.' });
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    if (Object.keys(body).some((key) => key !== 'novaSenha')) return res.status(400).json({ erro: 'Envie somente a nova senha.' });
+    const novaSenha = typeof body.novaSenha === 'string' ? body.novaSenha : '';
+    if (novaSenha.length < 12) return res.status(400).json({ erro: 'A nova senha deve ter pelo menos 12 caracteres.' });
+    if (Buffer.byteLength(novaSenha, 'utf8') > 72) return res.status(400).json({ erro: 'A senha não pode exceder 72 bytes.' });
+    try {
+      const [rows] = await db.execute('SELECT id FROM usuarios WHERE id = ? LIMIT 1', [req.params.id]);
+      if (!rows[0]) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+      const senhaHash = await bcrypt.hash(novaSenha, 12);
+      await db.execute('UPDATE usuarios SET senha_hash = ? WHERE id = ?', [senhaHash, req.params.id]);
+      res.set('Cache-Control', 'no-store').json({ mensagem: 'Senha atualizada com sucesso. As sessões existentes continuam ativas.' });
+    } catch (error) { next(error); }
+  });
+
   app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada.', caminho: req.path }));
   app.use((error, req, res, next) => {
     console.error('Erro interno:', error.code || 'erro inesperado');

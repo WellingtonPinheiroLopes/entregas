@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import './App.css'
 
 const api = async (path, options = {}) => {
@@ -155,14 +155,50 @@ function Account({ csrfToken, onExpired, onUserUpdate, onPasswordChanged }) {
   </div>
 }
 
+function Users({ csrfToken, onExpired }) {
+  const [users, setUsers] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [query, setQuery] = useState('')
+  const [selected, setSelected] = useState(null)
+  const [form, setForm] = useState({ nome: '', email: '', acesso: 'convidado', novaSenha: '' })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const refresh = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true)
+    try { setUsers(await api('/usuarios')) }
+    catch (requestError) { setError(requestError.message); if (/autenticação|sessão inválida/i.test(requestError.message)) onExpired() }
+    finally { setLoading(false) }
+  }, [onExpired])
+  useEffect(() => { refresh(false) }, [refresh])
+  function edit(user) { setSelected(user); setForm({ nome: user.nome, email: user.email, acesso: user.acesso, novaSenha: '' }); setError(''); setNotice('') }
+  async function save(event) {
+    event.preventDefault(); setSaving(true); setError(''); setNotice('')
+    try {
+      await api(`/usuarios/${selected.id}`, { method: 'PATCH', headers: { 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ nome: form.nome, email: form.email, acesso: form.acesso }) })
+      if (form.novaSenha) await api(`/usuarios/${selected.id}/password`, { method: 'PATCH', headers: { 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ novaSenha: form.novaSenha }) })
+      setSelected(null); setNotice('Alterações salvas com sucesso.'); await refresh()
+    } catch (requestError) { setError(requestError.message); if (/autenticação|sessão inválida/i.test(requestError.message)) onExpired() }
+    finally { setSaving(false) }
+  }
+  const filtered = users.filter((item) => `${item.nome} ${item.email}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
+  return <section className="users-page" aria-labelledby="users-title">
+    <header className="account-heading users-heading"><div><span className="section-label"><i /> ADMINISTRAÇÃO</span><h1 id="users-title">Gerenciamento de usuários</h1><p>Consulte os usuários cadastrados e gerencie seus dados e permissões.</p></div><span className="users-heading-icon" aria-hidden="true">♙</span></header>
+    {error && <p className="error-message" role="alert">{error}</p>}{notice && <p className="success-message" role="status">{notice}</p>}
+    <label className="users-search">Pesquisar por nome ou e-mail<input type="search" placeholder="Ex.: Maria ou maria@empresa.com" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+    {loading ? <div className="account-loading"><span className="spinner" /> Carregando usuários...</div> : filtered.length === 0 ? <div className="users-empty"><span aria-hidden="true">⌕</span><h2>{query ? 'Nenhum usuário encontrado' : 'Nenhum usuário cadastrado'}</h2><p>{query ? 'Tente pesquisar por outro nome ou e-mail.' : 'Os usuários aparecerão aqui quando forem cadastrados.'}</p></div> : <div className="users-table-wrap"><table className="users-table"><thead><tr><th>Nome</th><th>E-mail</th><th>Senha</th><th>Tipo de acesso</th><th>Ações</th></tr></thead><tbody>{filtered.map((item) => <tr key={item.id}><td data-label="Nome"><span className="user-name-cell"><span className="user-mini-avatar">{item.nome.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}</span>{item.nome}</span></td><td data-label="E-mail">{item.email}</td><td data-label="Senha"><span className="protected-password">••••••••</span><small>Senha protegida</small></td><td data-label="Tipo de acesso"><span className={`access-badge ${item.acesso === 'administrador' ? 'admin-badge' : ''}`}><i />{item.acesso}</span></td><td data-label="Ações"><button className="edit-user-button" onClick={() => edit(item)}><span aria-hidden="true">✎</span> Editar</button></td></tr>)}</tbody></table></div>}
+    {selected && <div className="user-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setSelected(null) }}><section className="user-modal" role="dialog" aria-modal="true" aria-labelledby="edit-user-title"><header className="account-heading"><div><span className="section-label">DADOS DA CONTA</span><h2 id="edit-user-title">Editar usuário</h2><p>Atualize as informações e permissões de acesso.</p></div><button className="modal-close" type="button" aria-label="Fechar" disabled={saving} onClick={() => setSelected(null)}>×</button></header><form onSubmit={save} noValidate><label className="account-field">Nome<input autoComplete="name" maxLength={150} required value={form.nome} disabled={saving} onChange={(event) => setForm({ ...form, nome: event.target.value })} /></label><label className="account-field">E-mail<input type="email" autoComplete="email" maxLength={254} required value={form.email} disabled={saving} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label><label className="account-field">Tipo de acesso<select value={form.acesso} disabled={saving} onChange={(event) => setForm({ ...form, acesso: event.target.value })}><option value="administrador">Administrador</option><option value="convidado">Convidado</option></select></label><label className="account-field">Nova senha<input type="password" autoComplete="new-password" minLength={12} placeholder="Deixe em branco para manter a senha atual" value={form.novaSenha} disabled={saving} onChange={(event) => setForm({ ...form, novaSenha: event.target.value })} /><small>Preencha somente se desejar definir uma nova senha (mínimo de 12 caracteres).</small></label>{error && <p className="error-message" role="alert">{error}</p>}<div className="account-actions"><button className="secondary-button" type="button" disabled={saving} onClick={() => setSelected(null)}>Cancelar</button><button className="submit-button account-submit" type="submit" disabled={saving}>{saving ? <><span className="spinner" /> Salvando...</> : 'Salvar alterações'}</button></div></form></section></div>}
+  </section>
+}
+
 function Dashboard({ user, onLogout, error, csrfToken, onUserUpdate, onExpired, onPasswordChanged }) {
   const [view, setView] = useState('home')
   const firstName = user.nome?.trim().split(/\s+/)[0] || 'Olá'
   const initials = user.nome?.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'U'
   return <main className="dashboard-page">
-    <header className="topbar"><Brand compact /><div className="topbar-right"><button className={`nav-button ${view === 'home' ? 'active' : ''}`} onClick={() => setView('home')}>Painel</button><button className={`nav-button ${view === 'account' ? 'active' : ''}`} onClick={() => setView('account')}>Minha conta</button><span className="topbar-caption">PAINEL DE OPERAÇÕES</span><span className="avatar" aria-label={`Usuário ${user.nome}`}>{initials}</span><button className="logout-button" onClick={onLogout}>Sair <span aria-hidden="true">↗</span></button></div></header>
+    <header className="topbar"><Brand compact /><div className="topbar-right"><button className={`nav-button ${view === 'home' ? 'active' : ''}`} onClick={() => setView('home')}>Painel</button>{user.acesso === 'administrador' && <button className={`nav-button ${view === 'users' ? 'active' : ''}`} onClick={() => setView('users')}><span aria-hidden="true">♙ </span>Usuários</button>}<button className={`nav-button ${view === 'account' ? 'active' : ''}`} onClick={() => setView('account')}>Minha conta</button><span className="topbar-caption">PAINEL DE OPERAÇÕES</span><span className="avatar" aria-label={`Usuário ${user.nome}`}>{initials}</span><button className="logout-button" onClick={onLogout}>Sair <span aria-hidden="true">↗</span></button></div></header>
     <div className="dashboard-content">
-      {view === 'account' ? <Account csrfToken={csrfToken} onExpired={onExpired} onUserUpdate={onUserUpdate} onPasswordChanged={onPasswordChanged} /> : <>
+      {view === 'account' ? <Account csrfToken={csrfToken} onExpired={onExpired} onUserUpdate={onUserUpdate} onPasswordChanged={onPasswordChanged} /> : view === 'users' && user.acesso === 'administrador' ? <Users csrfToken={csrfToken} onExpired={onExpired} /> : <>
         <section className="welcome-card"><div className="welcome-copy"><span className="section-label"><i /> ÁREA DE TRABALHO</span><h1>Olá, {firstName}<span className="wave" aria-hidden="true">✳</span></h1><p>Você está conectado ao Projeto Entregas.</p></div><div className="welcome-meta"><span className="meta-caption">PERFIL DE ACESSO</span><span className="access-badge"><i />{user.acesso === 'administrador' ? 'Administrador' : 'Convidado'}</span></div></section>
         {error && <p className="error-message dashboard-error" role="alert">{error}</p>}
         <section className="workspace-card" aria-labelledby="workspace-title"><div className="workspace-icon" aria-hidden="true"><svg viewBox="0 0 48 48" fill="none"><rect x="7" y="12" width="34" height="27" rx="5" stroke="currentColor" strokeWidth="2"/><path d="M16 12V9a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v3M7 23h34M19 23v4h10v-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="m16 33 3 3 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg></div><span className="section-label">TUDO PRONTO</span><h2 id="workspace-title">Seu espaço de trabalho</h2><p>Acesso confirmado. As ferramentas disponíveis para o seu perfil aparecerão aqui.</p></section>
