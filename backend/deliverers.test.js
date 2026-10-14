@@ -19,7 +19,7 @@ const db = {
     if (sql.includes('FROM usuarios WHERE email')) return [[...users.filter((user) => user.email === params[0])]];
     if (sql.includes('FROM usuarios WHERE id')) return [[...users.filter((user) => String(user.id) === String(params[0])).map(publicUser)]];
     if (sql.includes('INSERT INTO entregadores')) {
-      const fields = ['nome', 'cpf', 'cep', 'endereco', 'quadra', 'lote', 'numero', 'setor'];
+      const fields = ['nome', 'cpf', 'cidade', 'estado', 'cep', 'endereco', 'quadra', 'lote', 'numero', 'setor'];
       const row = Object.fromEntries(fields.map((field, index) => [field, params[index]]));
       if (row.cpf && records.some((item) => item.cpf === row.cpf)) { const error = new Error('Duplicate'); error.code = 'ER_DUP_ENTRY'; throw error; }
       Object.assign(row, { id: nextId++, criado_em: '2026-01-01', atualizado_em: '2026-01-01' }); records.push(row); return [{ insertId: row.id }];
@@ -78,16 +78,19 @@ test('endpoints de entregadores exigem autenticação administrativa', async () 
 
 test('valida entrada, CPF e normaliza strings ao cadastrar', async () => {
   cookie = ''; await login('admin@example.com');
-  const valid = { nome: '  Maria Silva  ', cpf: '529.982.247-25', cep: '01001-000', endereco: 'Rua Direita', quadra: 'Q2', lote: 'L4', numero: '15', setor: 'Centro' };
+  const valid = { nome: '  Maria Silva  ', cpf: '529.982.247-25', cidade: 'São Paulo', estado: 'sp', cep: '01001-000', endereco: 'Rua Direita', quadra: 'Q2', lote: 'L4', numero: '15', setor: 'Centro' };
   assert.equal((await mutate('POST', '/api/deliverers', { ...valid, nome: ' ' })).response.status, 400);
   assert.equal((await mutate('POST', '/api/deliverers', { ...valid, endereco: '' })).response.status, 400);
   assert.equal((await mutate('POST', '/api/deliverers', { ...valid, cpf: 'abc' })).response.status, 400);
   assert.equal((await mutate('POST', '/api/deliverers', { ...valid, nome: 123 })).response.status, 400);
   assert.equal((await mutate('POST', '/api/deliverers', { ...valid, cpf: '111.111.111-11' })).response.status, 400);
   assert.equal((await mutate('POST', '/api/deliverers', { ...valid, cpf: '529.982.247-24' })).response.status, 400);
+  assert.equal((await mutate('POST', '/api/deliverers', { ...valid, estado: 'XX' })).response.status, 400);
+  assert.equal((await mutate('POST', '/api/deliverers', { ...valid, cidade: '' })).response.status, 400);
   const created = await mutate('POST', '/api/deliverers', valid);
   assert.equal(created.response.status, 201); assert.equal(created.body.entregador.nome, 'Maria Silva');
   assert.equal(created.body.entregador.cpf, '52998224725'); assert.equal(created.body.entregador.cep, '01001000');
+  assert.equal(created.body.entregador.cidade, 'São Paulo'); assert.equal(created.body.entregador.estado, 'SP');
   assert.equal((await mutate('POST', '/api/deliverers', valid)).response.status, 409);
   const withoutCpf = await mutate('POST', '/api/deliverers', { ...valid, nome: 'Sem CPF', cpf: '' });
   assert.equal(withoutCpf.response.status, 201); assert.equal(withoutCpf.body.entregador.cpf, null);
@@ -101,6 +104,8 @@ test('consulta, pesquisa, atualiza campos e trata IDs inválidos/inexistentes', 
   assert.equal((await request('/api/deliverers?q=Maria')).body.length, 1);
   const updated = await mutate('PATCH', '/api/deliverers/1', { numero: '22', quadra: 'Q9' });
   assert.equal(updated.response.status, 200); assert.equal(updated.body.entregador.numero, '22'); assert.equal(updated.body.entregador.quadra, 'Q9');
+  const addressUpdate = await mutate('PATCH', '/api/deliverers/1', { cidade: 'Campinas', estado: 'mg' });
+  assert.equal(addressUpdate.body.entregador.cidade, 'Campinas'); assert.equal(addressUpdate.body.entregador.estado, 'MG');
   assert.equal((await mutate('PATCH', '/api/deliverers/1', { cpf: '123' })).response.status, 400);
   assert.equal((await mutate('PATCH', '/api/deliverers/1', { nome: 'Não permitido', acesso: 'administrador' })).response.status, 400);
 });
@@ -111,7 +116,7 @@ test('proxy de rua exige cidade e estado, retorna várias opções, aplica cache
   const result = await request('/api/address/street?street=Rua%20das%20Flores&city=Curitiba&state=PR');
   assert.equal(result.response.status, 200); assert.equal(result.body.resultados.length, 2);
   assert.equal(new URL(geocodeCalls[0].url).searchParams.get('city'), 'Curitiba');
-  assert.equal(new URL(geocodeCalls[0].url).searchParams.get('state'), 'PR');
+  assert.equal(new URL(geocodeCalls[0].url).searchParams.get('state'), 'Paraná');
   assert.match(geocodeCalls[0].options.headers['User-Agent'], /ProjetoEntregas/);
   assert.equal((await request('/api/address/street?street=Rua%20das%20Flores&city=Curitiba&state=PR')).response.status, 200);
   assert.equal(geocodeCalls.length, 1);

@@ -130,7 +130,8 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
     if (cached && cached.expiresAt > Date.now()) return res.set('Cache-Control', 'private, max-age=300').json({ resultados: cached.results });
     if (Date.now() - lastGeocodeRequestAt < 1000) return res.status(429).json({ erro: 'A busca de endereços está temporariamente limitada. Aguarde um segundo e tente novamente.' });
     lastGeocodeRequestAt = Date.now();
-    const params = new URLSearchParams({ street, city, state, country: 'Brasil', format: 'jsonv2', addressdetails: '1', limit: '8' });
+    const stateNames = { AC: 'Acre', AL: 'Alagoas', AP: 'Amapá', AM: 'Amazonas', BA: 'Bahia', CE: 'Ceará', DF: 'Distrito Federal', ES: 'Espírito Santo', GO: 'Goiás', MA: 'Maranhão', MT: 'Mato Grosso', MS: 'Mato Grosso do Sul', MG: 'Minas Gerais', PA: 'Pará', PB: 'Paraíba', PR: 'Paraná', PE: 'Pernambuco', PI: 'Piauí', RJ: 'Rio de Janeiro', RN: 'Rio Grande do Norte', RS: 'Rio Grande do Sul', RO: 'Rondônia', RR: 'Roraima', SC: 'Santa Catarina', SP: 'São Paulo', SE: 'Sergipe', TO: 'Tocantins' };
+    const params = new URLSearchParams({ street, city, state: stateNames[state.toLocaleUpperCase('pt-BR')] || state, country: 'Brasil', format: 'jsonv2', addressdetails: '1', limit: '8' });
     try {
       const response = await fetchImpl(`${geocodingUrl}?${params}`, {
         headers: { Accept: 'application/json', 'User-Agent': 'ProjetoEntregas/1.0 (admin address lookup)' },
@@ -275,8 +276,9 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
     } catch (error) { next(error); }
   });
 
-  const DELIVERER_FIELDS = ['nome', 'cpf', 'cep', 'endereco', 'quadra', 'lote', 'numero', 'setor'];
-  const DELIVERER_COLUMNS = 'id, nome, cpf, cep, endereco, quadra, lote, numero, setor, criado_em, atualizado_em';
+  const DELIVERER_FIELDS = ['nome', 'cpf', 'cidade', 'estado', 'cep', 'endereco', 'quadra', 'lote', 'numero', 'setor'];
+  const DELIVERER_COLUMNS = 'id, nome, cpf, cidade, estado, cep, endereco, quadra, lote, numero, setor, criado_em, atualizado_em';
+  const BRAZILIAN_STATES = new Set('AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' '));
   const validCpf = (cpf) => {
     if (!/^\d{11}$/.test(cpf) || /^([0-9])\1{10}$/.test(cpf)) return false;
     const digit = (length) => {
@@ -298,10 +300,11 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
       if (typeof value !== 'string') return { error: `O campo ${field} deve ser texto.` };
       value = value.trim();
       const provided = value.length > 0;
-      const limits = { nome: 150, cpf: 20, cep: 12, endereco: 255, quadra: 50, lote: 50, numero: 30, setor: 120 };
+      const limits = { nome: 150, cpf: 20, cidade: 100, estado: 2, cep: 12, endereco: 255, quadra: 50, lote: 50, numero: 30, setor: 120 };
       if (value.length > limits[field]) return { error: `O campo ${field} excede o limite permitido.` };
       if (field === 'cpf') value = value.replace(/\D/g, '');
       if (field === 'cep') value = value.replace(/\D/g, '');
+      if (field === 'estado') value = value.toLocaleUpperCase('pt-BR');
       if (provided && !value && (field === 'cpf' || field === 'cep')) return { error: `Informe um ${field.toUpperCase()} válido.` };
       result[field] = value || null;
     }
@@ -312,6 +315,14 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
     if (!partial || Object.hasOwn(result, 'endereco')) {
       result.endereco = typeof body.endereco === 'string' ? body.endereco.trim() : '';
       if (!result.endereco || result.endereco.length > 255) return { error: 'Informe o logradouro com até 255 caracteres.' };
+    }
+    if (!partial || Object.hasOwn(result, 'cidade')) {
+      result.cidade = typeof body.cidade === 'string' ? body.cidade.trim() : '';
+      if (!result.cidade || result.cidade.length > 100) return { error: 'Informe a cidade com até 100 caracteres.' };
+    }
+    if (!partial || Object.hasOwn(result, 'estado')) {
+      result.estado = typeof body.estado === 'string' ? body.estado.trim().toLocaleUpperCase('pt-BR') : '';
+      if (!BRAZILIAN_STATES.has(result.estado)) return { error: 'Informe uma UF brasileira válida.' };
     }
     if (result.cpf && !validCpf(result.cpf)) return { error: 'Informe um CPF válido.' };
     if (result.cep && !/^\d{8}$/.test(result.cep)) return { error: 'Informe um CEP válido com 8 dígitos.' };
