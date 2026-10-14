@@ -78,13 +78,18 @@ test('admin edita dados, valida perfil e e-mail duplicado; não pode rebaixar ú
   assert.equal((await patch('/api/usuarios/1', { nome: 'Admin', email: 'admin@example.com', acesso: 'convidado' })).response.status, 409);
 });
 
-test('senha administrativa é validada, salva com bcrypt e senha vazia não altera hash', async () => {
+test('senha administrativa aceita 1 a 10 caracteres, rejeita vazia/11 e salva com bcrypt', async () => {
   cookie = ''; await login('admin@example.com');
-  const oldHash = users[1].senha_hash;
-  assert.equal((await patch('/api/usuarios/2/password', { novaSenha: 'curta' })).response.status, 400);
-  const changed = await patch('/api/usuarios/2/password', { novaSenha: 'senha-administrativa-2026' });
-  assert.equal(changed.response.status, 200); assert.match(users[1].senha_hash, /^\$2[aby]\$/);
-  assert.equal(await bcrypt.compare('senha-administrativa-2026', users[1].senha_hash), true);
-  assert.equal(JSON.stringify(changed.body).includes(users[1].senha_hash), false);
-  const retained = users[1].senha_hash; assert.equal(oldHash === retained, false);
+  for (const senha of ['', '12345678901']) {
+    const rejected = await patch('/api/usuarios/2/password', { novaSenha: senha });
+    assert.equal(rejected.response.status, 400);
+    assert.match(rejected.body.erro, /1 a 10 caracteres/);
+  }
+  for (const senha of ['x', '1234567890']) {
+    const changed = await patch('/api/usuarios/2/password', { novaSenha: senha });
+    assert.equal(changed.response.status, 200);
+    assert.match(users[1].senha_hash, /^\$2[aby]\$/);
+    assert.equal(await bcrypt.compare(senha, users[1].senha_hash), true);
+    assert.equal(JSON.stringify(changed.body).includes(users[1].senha_hash), false);
+  }
 });

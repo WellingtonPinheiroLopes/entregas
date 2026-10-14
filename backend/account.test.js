@@ -51,19 +51,32 @@ test('perfil altera somente nome e bloqueia campos protegidos', async () => {
   for (const campo of ['acesso', 'email', 'id', 'senha_hash']) assert.equal((await patch('/api/account', { nome: 'Outro Nome', [campo]: 'adulterado' }, token)).response.status, 400);
   assert.equal((await patch('/api/account', { nome: 'Alterado sem token' }, '')).response.status, 403);
 });
-test('senha rejeita senha atual incorreta, confirmação divergente e política insuficiente', async () => {
+test('senha rejeita senha atual incorreta, confirmação divergente, vazia e acima de 10 caracteres', async () => {
   cookie = ''; await login(); const token = (await request('/api/auth/me')).body.csrfToken;
-  assert.equal((await patch('/api/account/password', { senhaAtual: 'incorreta', novaSenha: 'nova-senha-segura-2026', confirmarSenha: 'nova-senha-segura-2026' }, token)).response.status, 400);
-  assert.equal((await patch('/api/account/password', { senhaAtual: 'senha-atual-segura', novaSenha: 'nova-senha-segura-2026', confirmarSenha: 'diferente' }, token)).response.status, 400);
-  assert.equal((await patch('/api/account/password', { senhaAtual: 'senha-atual-segura', novaSenha: 'curta123', confirmarSenha: 'curta123' }, token)).response.status, 400);
+  assert.equal((await patch('/api/account/password', { senhaAtual: 'incorreta', novaSenha: 'abc', confirmarSenha: 'abc' }, token)).response.status, 400);
+  assert.equal((await patch('/api/account/password', { senhaAtual: 'senha-atual-segura', novaSenha: 'abc', confirmarSenha: 'diferente' }, token)).response.status, 400);
+  for (const senha of ['', '12345678901']) {
+    const rejected = await patch('/api/account/password', { senhaAtual: 'senha-atual-segura', novaSenha: senha, confirmarSenha: senha }, token);
+    assert.equal(rejected.response.status, 400);
+    assert.match(rejected.body.erro, /1 a 10 caracteres/);
+  }
 });
-test('senha válida atualiza hash, encerra sessão atual e permite novo login', async () => {
-  cookie = ''; await login(); const token = (await request('/api/auth/me')).body.csrfToken;
-  const nextPassword = 'nova-senha-segura-2026';
-  const changed = await patch('/api/account/password', { senhaAtual: 'senha-atual-segura', novaSenha: nextPassword, confirmarSenha: nextPassword }, token);
-  assert.equal(changed.response.status, 200); assert.match(passwordHash, /^\$2[aby]\$/);
-  assert.equal(await bcrypt.compare(nextPassword, passwordHash), true); assert.equal(JSON.stringify(changed.body).includes(passwordHash), false);
-  assert.equal((await request('/api/account')).response.status, 401); cookie = '';
-  const authenticated = await login(nextPassword); assert.equal(authenticated.response.status, 200);
-  assert.equal(JSON.stringify(authenticated.body).includes(passwordHash), false);
+test('senhas com 1 e 10 caracteres geram hashes bcrypt e permitem login', async () => {
+  let currentPassword = 'senha-atual-segura';
+  for (const nextPassword of ['x', '1234567890']) {
+    cookie = '';
+    assert.equal((await login(currentPassword)).response.status, 200);
+    const token = (await request('/api/auth/me')).body.csrfToken;
+    const changed = await patch('/api/account/password', { senhaAtual: currentPassword, novaSenha: nextPassword, confirmarSenha: nextPassword }, token);
+    assert.equal(changed.response.status, 200);
+    assert.match(passwordHash, /^\$2[aby]\$/);
+    assert.equal(await bcrypt.compare(nextPassword, passwordHash), true);
+    assert.equal(JSON.stringify(changed.body).includes(passwordHash), false);
+    assert.equal((await request('/api/account')).response.status, 401);
+    cookie = '';
+    const authenticated = await login(nextPassword);
+    assert.equal(authenticated.response.status, 200);
+    assert.equal(JSON.stringify(authenticated.body).includes(passwordHash), false);
+    currentPassword = nextPassword;
+  }
 });

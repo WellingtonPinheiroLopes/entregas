@@ -138,9 +138,10 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
 
   app.patch('/api/account/password', csrfGuard, authenticate, async (req, res, next) => {
     const { senhaAtual, novaSenha, confirmarSenha } = req.body || {};
-    if ([senhaAtual, novaSenha, confirmarSenha].some((value) => typeof value !== 'string' || !value)) return res.status(400).json({ erro: 'Preencha todos os campos de senha.' });
-    if (Buffer.byteLength(senhaAtual, 'utf8') > 72 || Buffer.byteLength(novaSenha, 'utf8') > 72) return res.status(400).json({ erro: 'A senha não pode exceder 72 bytes.' });
-    if (novaSenha.length < 12) return res.status(400).json({ erro: 'A nova senha deve ter pelo menos 12 caracteres.' });
+    if ([senhaAtual, novaSenha, confirmarSenha].some((value) => typeof value !== 'string')) return res.status(400).json({ erro: 'Preencha todos os campos de senha.' });
+    if ([...novaSenha].length < 1 || [...novaSenha].length > 10) return res.status(400).json({ erro: 'A nova senha deve ter de 1 a 10 caracteres.' });
+    if (!senhaAtual || !confirmarSenha) return res.status(400).json({ erro: 'Preencha todos os campos de senha.' });
+    if (Buffer.byteLength(senhaAtual, 'utf8') > 72) return res.status(400).json({ erro: 'A senha atual não pode exceder 72 bytes.' });
     if (novaSenha !== confirmarSenha) return res.status(400).json({ erro: 'A confirmação não corresponde à nova senha.' });
     try {
       const [rows] = await db.execute('SELECT senha_hash FROM usuarios WHERE id = ? LIMIT 1', [req.session.userId]);
@@ -232,8 +233,7 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
     const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
     if (Object.keys(body).some((key) => key !== 'novaSenha')) return res.status(400).json({ erro: 'Envie somente a nova senha.' });
     const novaSenha = typeof body.novaSenha === 'string' ? body.novaSenha : '';
-    if (novaSenha.length < 12) return res.status(400).json({ erro: 'A nova senha deve ter pelo menos 12 caracteres.' });
-    if (Buffer.byteLength(novaSenha, 'utf8') > 72) return res.status(400).json({ erro: 'A senha não pode exceder 72 bytes.' });
+    if ([...novaSenha].length < 1 || [...novaSenha].length > 10) return res.status(400).json({ erro: 'A nova senha deve ter de 1 a 10 caracteres.' });
     try {
       const [rows] = await db.execute('SELECT id FROM usuarios WHERE id = ? LIMIT 1', [req.params.id]);
       if (!rows[0]) return res.status(404).json({ erro: 'Usuário não encontrado.' });
