@@ -10,7 +10,7 @@ const MySQLSessionStore = require('./src/mysql-session-store');
 const SESSION_MS = Number(process.env.SESSION_MAX_AGE_MS) || 8 * 60 * 60 * 1000;
 const PUBLIC_USER = 'id, nome, email, acesso, criado_em, atualizado_em';
 
-function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = false } = {}) {
+function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = false, fetchImpl = globalThis.fetch } = {}) {
   if (!db) throw new Error('A conexão com o banco de dados é obrigatória.');
   const app = express();
   const secureCookie = process.env.NODE_ENV === 'production';
@@ -114,6 +114,38 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
   };
   app.locals.authenticate = authenticate;
   app.locals.requireAccess = requireAccess;
+
+  const addressCache = new Map();
+  let lastGeocodeRequestAt = 0;
+  const geocodingUrl = process.env.GEOCODING_URL || 'https://nominatim.openstreetmap.org/search';
+  app.get('/api/address/street', authenticate, requireAccess('administrador'), async (req, res) => {
+    const street = typeof req.query.street === 'string' ? req.query.street.trim() : '';
+    const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
+    const state = typeof req.query.state === 'string' ? req.query.state.trim() : '';
+    if (!street || !city || !state || street.length > 150 || city.length > 100 || state.length > 100) {
+      return res.status(400).json({ erro: 'Informe rua, cidade e estado com até 150, 100 e 100 caracteres.' });
+    }
+    const cacheKey = `${street.toLocaleLowerCase()}|${city.toLocaleLowerCase()}|${state.toLocaleLowerCase()}`;
+    const cached = addressCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return res.set('Cache-Control', 'private, max-age=300').json({ resultados: cached.results });
+    if (Date.now() - lastGeocodeRequestAt < 1000) return res.status(429).json({ erro: 'A busca de endereços está temporariamente limitada. Aguarde um segundo e tente novamente.' });
+    lastGeocodeRequestAt = Date.now();
+    const params = new URLSearchParams({ street, city, state, country: 'Brasil', format: 'jsonv2', addressdetails: '1', limit: '8' });
+    try {
+      const response = await fetchImpl(`${geocodingUrl}?${params}`, {
+        headers: { Accept: 'application/json', 'User-Agent': 'ProjetoEntregas/1.0 (admin address lookup)' },
+        signal: AbortSignal.timeout(7000),
+      });
+      if (!response.ok) return res.status(502).json({ erro: 'A busca de endereços está indisponível. Tente novamente mais tarde.' });
+      const results = await response.json();
+      if (!Array.isArray(results)) return res.status(502).json({ erro: 'O serviço de endereços retornou uma resposta inválida.' });
+      addressCache.set(cacheKey, { results, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
+      if (addressCache.size > 200) addressCache.delete(addressCache.keys().next().value);
+      res.set('Cache-Control', 'private, max-age=300').json({ resultados: results });
+    } catch {
+      res.status(502).json({ erro: 'A busca de endereços está indisponível. Tente novamente mais tarde.' });
+    }
+  });
 
   app.get('/api/auth/me', authenticate, (req, res) => {
     res.set('Cache-Control', 'no-store').json({ usuario: req.user, csrfToken: req.session.csrfToken });
@@ -241,6 +273,102 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
       await db.execute('UPDATE usuarios SET senha_hash = ? WHERE id = ?', [senhaHash, req.params.id]);
       res.set('Cache-Control', 'no-store').json({ mensagem: 'Senha atualizada com sucesso. As sessões existentes continuam ativas.' });
     } catch (error) { next(error); }
+  });
+
+  const DELIVERER_FIELDS = ['nome', 'cpf', 'cep', 'endereco', 'quadra', 'lote', 'numero', 'setor'];
+  const DELIVERER_COLUMNS = 'id, nome, cpf, cep, endereco, quadra, lote, numero, setor, criado_em, atualizado_em';
+  const validCpf = (cpf) => {
+    if (!/^\d{11}$/.test(cpf) || /^([0-9])\1{10}$/.test(cpf)) return false;
+    const digit = (length) => {
+      const sum = [...cpf.slice(0, length)].reduce((total, value, index) => total + Number(value) * (length + 1 - index), 0);
+      const remainder = (sum * 10) % 11;
+      return remainder === 10 ? 0 : remainder;
+    };
+    return digit(9) === Number(cpf[9]) && digit(10) === Number(cpf[10]);
+  };
+  function parseDeliverer(body, partial = false) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return { error: 'Envie dados válidos do entregador.' };
+    if (Object.keys(body).some((key) => !DELIVERER_FIELDS.includes(key))) return { error: 'Envie somente os campos do cadastro de entregador.' };
+    if (partial && Object.keys(body).length === 0) return { error: 'Informe ao menos um campo para atualizar.' };
+    const result = {};
+    for (const field of DELIVERER_FIELDS) {
+      if (partial && !Object.hasOwn(body, field)) continue;
+      let value = body[field];
+      if (value == null) value = '';
+      if (typeof value !== 'string') return { error: `O campo ${field} deve ser texto.` };
+      value = value.trim();
+      const provided = value.length > 0;
+      const limits = { nome: 150, cpf: 20, cep: 12, endereco: 255, quadra: 50, lote: 50, numero: 30, setor: 120 };
+      if (value.length > limits[field]) return { error: `O campo ${field} excede o limite permitido.` };
+      if (field === 'cpf') value = value.replace(/\D/g, '');
+      if (field === 'cep') value = value.replace(/\D/g, '');
+      if (provided && !value && (field === 'cpf' || field === 'cep')) return { error: `Informe um ${field.toUpperCase()} válido.` };
+      result[field] = value || null;
+    }
+    if (!partial || Object.hasOwn(result, 'nome')) {
+      result.nome = typeof body.nome === 'string' ? body.nome.trim() : '';
+      if (!result.nome || result.nome.length > 150) return { error: 'Informe o nome completo com até 150 caracteres.' };
+    }
+    if (!partial || Object.hasOwn(result, 'endereco')) {
+      result.endereco = typeof body.endereco === 'string' ? body.endereco.trim() : '';
+      if (!result.endereco || result.endereco.length > 255) return { error: 'Informe o logradouro com até 255 caracteres.' };
+    }
+    if (result.cpf && !validCpf(result.cpf)) return { error: 'Informe um CPF válido.' };
+    if (result.cep && !/^\d{8}$/.test(result.cep)) return { error: 'Informe um CEP válido com 8 dígitos.' };
+    return { value: result };
+  }
+
+  app.get('/api/deliverers', authenticate, requireAccess('administrador'), async (req, res, next) => {
+    try {
+      const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+      const digits = query.replace(/\D/g, '');
+      const [rows] = query
+        ? await db.execute(`SELECT ${DELIVERER_COLUMNS} FROM entregadores WHERE nome LIKE ? OR cpf LIKE ? ORDER BY id DESC`, [`%${query}%`, `%${digits || query}%`])
+        : await db.execute(`SELECT ${DELIVERER_COLUMNS} FROM entregadores ORDER BY id DESC`);
+      res.set('Cache-Control', 'no-store').json(rows);
+    } catch (error) { next(error); }
+  });
+
+  app.get('/api/deliverers/:id', authenticate, requireAccess('administrador'), async (req, res, next) => {
+    if (!/^\d+$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id)) || Number(req.params.id) < 1) return res.status(400).json({ erro: 'Identificador inválido.' });
+    try {
+      const [rows] = await db.execute(`SELECT ${DELIVERER_COLUMNS} FROM entregadores WHERE id = ? LIMIT 1`, [req.params.id]);
+      if (!rows[0]) return res.status(404).json({ erro: 'Entregador não encontrado.' });
+      res.set('Cache-Control', 'no-store').json({ entregador: rows[0] });
+    } catch (error) { next(error); }
+  });
+
+  app.post('/api/deliverers', csrfGuard, authenticate, requireAccess('administrador'), async (req, res, next) => {
+    const parsed = parseDeliverer(req.body);
+    if (parsed.error) return res.status(400).json({ erro: parsed.error });
+    try {
+      const fields = DELIVERER_FIELDS;
+      const [result] = await db.execute(`INSERT INTO entregadores (${fields.join(', ')}) VALUES (${fields.map(() => '?').join(', ')})`, fields.map((field) => parsed.value[field]));
+      const [rows] = await db.execute(`SELECT ${DELIVERER_COLUMNS} FROM entregadores WHERE id = ? LIMIT 1`, [result.insertId]);
+      res.status(201).json({ entregador: rows[0], mensagem: 'Entregador cadastrado com sucesso.' });
+    } catch (error) {
+      if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ erro: 'Já existe um entregador cadastrado com este CPF.' });
+      next(error);
+    }
+  });
+
+  app.patch('/api/deliverers/:id', csrfGuard, authenticate, requireAccess('administrador'), async (req, res, next) => {
+    if (!/^\d+$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id)) || Number(req.params.id) < 1) return res.status(400).json({ erro: 'Identificador inválido.' });
+    const parsed = parseDeliverer(req.body, true);
+    if (parsed.error) return res.status(400).json({ erro: parsed.error });
+    try {
+      const fields = Object.keys(parsed.value);
+      const [result] = await db.execute(`UPDATE entregadores SET ${fields.map((field) => `${field} = ?`).join(', ')} WHERE id = ?`, [...fields.map((field) => parsed.value[field]), req.params.id]);
+      if (!result.affectedRows) {
+        const [existing] = await db.execute('SELECT id FROM entregadores WHERE id = ? LIMIT 1', [req.params.id]);
+        if (!existing[0]) return res.status(404).json({ erro: 'Entregador não encontrado.' });
+      }
+      const [rows] = await db.execute(`SELECT ${DELIVERER_COLUMNS} FROM entregadores WHERE id = ? LIMIT 1`, [req.params.id]);
+      res.json({ entregador: rows[0], mensagem: 'Entregador atualizado com sucesso.' });
+    } catch (error) {
+      if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ erro: 'Já existe um entregador cadastrado com este CPF.' });
+      next(error);
+    }
   });
 
   app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada.', caminho: req.path }));
