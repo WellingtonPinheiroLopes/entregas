@@ -122,8 +122,8 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
     const street = typeof req.query.street === 'string' ? req.query.street.trim() : '';
     const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
     const state = typeof req.query.state === 'string' ? req.query.state.trim() : '';
-    if (!street || !city || !state || street.length > 150 || city.length > 100 || state.length > 100) {
-      return res.status(400).json({ erro: 'Informe rua, cidade e estado com até 150, 100 e 100 caracteres.' });
+    if (!street || street.length > 150 || city.length > 100 || state.length > 100) {
+      return res.status(400).json({ erro: 'Informe uma rua com até 150 caracteres; cidade e estado são opcionais.' });
     }
     const cacheKey = `${street.toLocaleLowerCase()}|${city.toLocaleLowerCase()}|${state.toLocaleLowerCase()}`;
     const cached = addressCache.get(cacheKey);
@@ -131,7 +131,9 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
     if (Date.now() - lastGeocodeRequestAt < 1000) return res.status(429).json({ erro: 'A busca de endereços está temporariamente limitada. Aguarde um segundo e tente novamente.' });
     lastGeocodeRequestAt = Date.now();
     const stateNames = { AC: 'Acre', AL: 'Alagoas', AP: 'Amapá', AM: 'Amazonas', BA: 'Bahia', CE: 'Ceará', DF: 'Distrito Federal', ES: 'Espírito Santo', GO: 'Goiás', MA: 'Maranhão', MT: 'Mato Grosso', MS: 'Mato Grosso do Sul', MG: 'Minas Gerais', PA: 'Pará', PB: 'Paraíba', PR: 'Paraná', PE: 'Pernambuco', PI: 'Piauí', RJ: 'Rio de Janeiro', RN: 'Rio Grande do Norte', RS: 'Rio Grande do Sul', RO: 'Rondônia', RR: 'Roraima', SC: 'Santa Catarina', SP: 'São Paulo', SE: 'Sergipe', TO: 'Tocantins' };
-    const params = new URLSearchParams({ street, city, state: stateNames[state.toLocaleUpperCase('pt-BR')] || state, country: 'Brasil', format: 'jsonv2', addressdetails: '1', limit: '8' });
+    const params = new URLSearchParams({ street, country: 'Brasil', format: 'jsonv2', addressdetails: '1', limit: '8' });
+    if (city) params.set('city', city);
+    if (state) params.set('state', stateNames[state.toLocaleUpperCase('pt-BR')] || state);
     try {
       const response = await fetchImpl(`${geocodingUrl}?${params}`, {
         headers: { Accept: 'application/json', 'User-Agent': 'ProjetoEntregas/1.0 (admin address lookup)' },
@@ -317,12 +319,14 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
       if (!result.endereco || result.endereco.length > 255) return { error: 'Informe o logradouro com até 255 caracteres.' };
     }
     if (!partial || Object.hasOwn(result, 'cidade')) {
-      result.cidade = typeof body.cidade === 'string' ? body.cidade.trim() : '';
-      if (!result.cidade || result.cidade.length > 100) return { error: 'Informe a cidade com até 100 caracteres.' };
+      const cidade = typeof body.cidade === 'string' ? body.cidade.trim() : '';
+      if (cidade.length > 100) return { error: 'A cidade deve ter até 100 caracteres.' };
+      result.cidade = cidade || null;
     }
     if (!partial || Object.hasOwn(result, 'estado')) {
-      result.estado = typeof body.estado === 'string' ? body.estado.trim().toLocaleUpperCase('pt-BR') : '';
-      if (!BRAZILIAN_STATES.has(result.estado)) return { error: 'Informe uma UF brasileira válida.' };
+      const estado = typeof body.estado === 'string' ? body.estado.trim().toLocaleUpperCase('pt-BR') : '';
+      if (estado && !BRAZILIAN_STATES.has(estado)) return { error: 'Informe uma UF brasileira válida.' };
+      result.estado = estado || null;
     }
     if (result.cpf && !validCpf(result.cpf)) return { error: 'Informe um CPF válido.' };
     if (result.cep && !/^\d{8}$/.test(result.cep)) return { error: 'Informe um CEP válido com 8 dígitos.' };

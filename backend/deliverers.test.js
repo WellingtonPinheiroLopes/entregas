@@ -86,7 +86,6 @@ test('valida entrada, CPF e normaliza strings ao cadastrar', async () => {
   assert.equal((await mutate('POST', '/api/deliverers', { ...valid, cpf: '111.111.111-11' })).response.status, 400);
   assert.equal((await mutate('POST', '/api/deliverers', { ...valid, cpf: '529.982.247-24' })).response.status, 400);
   assert.equal((await mutate('POST', '/api/deliverers', { ...valid, estado: 'XX' })).response.status, 400);
-  assert.equal((await mutate('POST', '/api/deliverers', { ...valid, cidade: '' })).response.status, 400);
   const created = await mutate('POST', '/api/deliverers', valid);
   assert.equal(created.response.status, 201); assert.equal(created.body.entregador.nome, 'Maria Silva');
   assert.equal(created.body.entregador.cpf, '52998224725'); assert.equal(created.body.entregador.cep, '01001000');
@@ -94,6 +93,8 @@ test('valida entrada, CPF e normaliza strings ao cadastrar', async () => {
   assert.equal((await mutate('POST', '/api/deliverers', valid)).response.status, 409);
   const withoutCpf = await mutate('POST', '/api/deliverers', { ...valid, nome: 'Sem CPF', cpf: '' });
   assert.equal(withoutCpf.response.status, 201); assert.equal(withoutCpf.body.entregador.cpf, null);
+  const manual = await mutate('POST', '/api/deliverers', { nome: 'Cadastro manual', endereco: 'Rua sem consulta' });
+  assert.equal(manual.response.status, 201); assert.equal(manual.body.entregador.cidade, null); assert.equal(manual.body.entregador.estado, null);
 });
 
 test('consulta, pesquisa, atualiza campos e trata IDs inválidos/inexistentes', async () => {
@@ -110,16 +111,21 @@ test('consulta, pesquisa, atualiza campos e trata IDs inválidos/inexistentes', 
   assert.equal((await mutate('PATCH', '/api/deliverers/1', { nome: 'Não permitido', acesso: 'administrador' })).response.status, 400);
 });
 
-test('proxy de rua exige cidade e estado, retorna várias opções, aplica cache e limita chamadas externas', async () => {
+test('proxy de rua aceita pesquisa sem cidade/estado, retorna opções, aplica cache e limita chamadas externas', async () => {
   cookie = ''; await login('admin@example.com');
-  assert.equal((await request('/api/address/street?street=Rua%20A&city=Cidade')).response.status, 400);
+  assert.equal((await request('/api/address/street')).response.status, 400);
+  const noLocation = await request('/api/address/street?street=Rua%20das%20Flores');
+  assert.equal(noLocation.response.status, 200); assert.equal(noLocation.body.resultados.length, 2);
+  assert.equal(new URL(geocodeCalls[0].url).searchParams.has('city'), false);
+  assert.equal(new URL(geocodeCalls[0].url).searchParams.has('state'), false);
+  await new Promise((resolve) => setTimeout(resolve, 1000));
   const result = await request('/api/address/street?street=Rua%20das%20Flores&city=Curitiba&state=PR');
   assert.equal(result.response.status, 200); assert.equal(result.body.resultados.length, 2);
-  assert.equal(new URL(geocodeCalls[0].url).searchParams.get('city'), 'Curitiba');
-  assert.equal(new URL(geocodeCalls[0].url).searchParams.get('state'), 'Paraná');
-  assert.match(geocodeCalls[0].options.headers['User-Agent'], /ProjetoEntregas/);
+  assert.equal(new URL(geocodeCalls[1].url).searchParams.get('city'), 'Curitiba');
+  assert.equal(new URL(geocodeCalls[1].url).searchParams.get('state'), 'Paraná');
+  assert.match(geocodeCalls[1].options.headers['User-Agent'], /ProjetoEntregas/);
   assert.equal((await request('/api/address/street?street=Rua%20das%20Flores&city=Curitiba&state=PR')).response.status, 200);
-  assert.equal(geocodeCalls.length, 1);
+  assert.equal(geocodeCalls.length, 2);
   assert.equal((await request('/api/address/street?street=Outra&city=Curitiba&state=PR')).response.status, 429);
   await new Promise((resolve) => setTimeout(resolve, 1000));
   failGeocode = true;
