@@ -118,6 +118,44 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
   app.get('/api/auth/me', authenticate, (req, res) => {
     res.set('Cache-Control', 'no-store').json({ usuario: req.user, csrfToken: req.session.csrfToken });
   });
+
+  app.get('/api/account', authenticate, (req, res) => {
+    res.set('Cache-Control', 'no-store').json({ usuario: req.user });
+  });
+
+  app.patch('/api/account', csrfGuard, authenticate, async (req, res, next) => {
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    if (Object.keys(body).some((key) => key !== 'nome')) return res.status(400).json({ erro: 'Altere somente o nome da conta.' });
+    const nome = typeof body.nome === 'string' ? body.nome.trim() : '';
+    if (!nome || nome.length > 150) return res.status(400).json({ erro: 'Informe um nome com até 150 caracteres.' });
+    try {
+      await db.execute('UPDATE usuarios SET nome = ? WHERE id = ?', [nome, req.session.userId]);
+      const [rows] = await db.execute(`SELECT ${PUBLIC_USER} FROM usuarios WHERE id = ? LIMIT 1`, [req.session.userId]);
+      if (!rows[0]) return res.status(401).json({ erro: 'Sessão inválida.' });
+      res.set('Cache-Control', 'no-store').json({ usuario: rows[0], mensagem: 'Nome atualizado com sucesso.' });
+    } catch (error) { next(error); }
+  });
+
+  app.patch('/api/account/password', csrfGuard, authenticate, async (req, res, next) => {
+    const { senhaAtual, novaSenha, confirmarSenha } = req.body || {};
+    if ([senhaAtual, novaSenha, confirmarSenha].some((value) => typeof value !== 'string' || !value)) return res.status(400).json({ erro: 'Preencha todos os campos de senha.' });
+    if (Buffer.byteLength(senhaAtual, 'utf8') > 72 || Buffer.byteLength(novaSenha, 'utf8') > 72) return res.status(400).json({ erro: 'A senha não pode exceder 72 bytes.' });
+    if (novaSenha.length < 12) return res.status(400).json({ erro: 'A nova senha deve ter pelo menos 12 caracteres.' });
+    if (novaSenha !== confirmarSenha) return res.status(400).json({ erro: 'A confirmação não corresponde à nova senha.' });
+    try {
+      const [rows] = await db.execute('SELECT senha_hash FROM usuarios WHERE id = ? LIMIT 1', [req.session.userId]);
+      if (!rows[0]) return res.status(401).json({ erro: 'Sessão inválida.' });
+      if (!(await bcrypt.compare(senhaAtual, rows[0].senha_hash))) return res.status(400).json({ erro: 'A senha atual está incorreta.' });
+      const senhaHash = await bcrypt.hash(novaSenha, 12);
+      await db.execute('UPDATE usuarios SET senha_hash = ? WHERE id = ?', [senhaHash, req.session.userId]);
+      if (typeof sessionStore.destroyUserSessions === 'function') {
+        await new Promise((resolve, reject) => sessionStore.destroyUserSessions(req.session.userId, (error) => error ? reject(error) : resolve()));
+      }
+      await new Promise((resolve, reject) => req.session.destroy((error) => error ? reject(error) : resolve()));
+      res.clearCookie('entregas.sid', { httpOnly: true, sameSite: 'lax', secure: secureCookie });
+      res.set('Cache-Control', 'no-store').json({ mensagem: 'Senha alterada. Entre novamente com sua nova senha.' });
+    } catch (error) { next(error); }
+  });
   app.post('/api/auth/logout', csrfGuard, authenticate, (req, res, next) => {
     req.session.destroy((error) => {
       if (error) return next(error);

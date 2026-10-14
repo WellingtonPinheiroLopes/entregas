@@ -67,6 +67,15 @@ class MySQLSessionStore extends session.Store {
       callback(error);
     }
   }
+
+  async destroyUserSessions(userId, callback = () => {}) {
+    try {
+      await this.pool.execute("DELETE FROM sessoes WHERE CAST(JSON_UNQUOTE(JSON_EXTRACT(sess, '$.userId')) AS UNSIGNED) = ?", [userId]);
+      callback(null);
+    } catch (error) {
+      callback(error);
+    }
+  }
 }
 
 module.exports = MySQLSessionStore;
