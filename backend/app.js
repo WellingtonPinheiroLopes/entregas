@@ -19,7 +19,7 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
   if (sessionSecret.length < 32) throw new Error('SESSION_SECRET deve conter pelo menos 32 caracteres.');
 
   app.disable('x-powered-by');
-  if (secureCookie) app.set('trust proxy', 1);
+  if (secureCookie || process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
   app.use(express.json({ limit: '10kb' }));
   app.use(session({
     name: 'entregas.sid',

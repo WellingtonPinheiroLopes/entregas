@@ -8,6 +8,7 @@ RUN npm ci --omit=dev
 
 COPY app.js server.js ./
 COPY src ./src
+RUN chmod -R a+rX app.js server.js src
 
 USER node
 
