@@ -11,8 +11,6 @@ const users = [
 ];
 const records = [];
 let nextId = 1;
-const geocodeCalls = [];
-let failGeocode = false;
 const publicUser = ({ senha_hash, ...user }) => user;
 const db = {
   async execute(sql, params = []) {
@@ -57,13 +55,7 @@ async function mutate(method, path, payload) {
 }
 before(async () => {
   users[0].senha_hash = await bcrypt.hash('admin-password', 4); users[1].senha_hash = await bcrypt.hash('guest-password', 4);
-  const app = createApp({ db, sessionStore: new session.MemoryStore(), testing: true, fetchImpl: async (url, options) => {
-    geocodeCalls.push({ url, options });
-    return failGeocode ? { ok: false } : { ok: true, json: async () => [
-      { place_id: 1, display_name: 'Rua das Flores, Curitiba', address: { road: 'Rua das Flores', postcode: '80000-000' } },
-      { place_id: 2, display_name: 'Rua das Flores, São Paulo', address: { road: 'Rua das Flores' } },
-    ] };
-  } });
+  const app = createApp({ db, sessionStore: new session.MemoryStore(), testing: true });
   server = app.listen(0, '127.0.0.1'); await new Promise((resolve) => server.once('listening', resolve)); baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
 after(async () => new Promise((resolve) => server.close(resolve)));
@@ -111,25 +103,7 @@ test('consulta, pesquisa, atualiza campos e trata IDs inválidos/inexistentes', 
   assert.equal((await mutate('PATCH', '/api/deliverers/1', { nome: 'Não permitido', acesso: 'administrador' })).response.status, 400);
 });
 
-test('proxy de rua aceita pesquisa sem cidade/estado, retorna opções, aplica cache e limita chamadas externas', async () => {
+test('endpoint exclusivo de pesquisa por rua foi removido', async () => {
   cookie = ''; await login('admin@example.com');
-  assert.equal((await request('/api/address/street')).response.status, 400);
-  const noLocation = await request('/api/address/street?street=Rua%20das%20Flores');
-  assert.equal(noLocation.response.status, 200); assert.equal(noLocation.body.resultados.length, 2);
-  assert.equal(new URL(geocodeCalls[0].url).searchParams.has('city'), false);
-  assert.equal(new URL(geocodeCalls[0].url).searchParams.has('state'), false);
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-  const result = await request('/api/address/street?street=Rua%20das%20Flores&city=Curitiba&state=PR');
-  assert.equal(result.response.status, 200); assert.equal(result.body.resultados.length, 2);
-  assert.equal(new URL(geocodeCalls[1].url).searchParams.get('city'), 'Curitiba');
-  assert.equal(new URL(geocodeCalls[1].url).searchParams.get('state'), 'Paraná');
-  assert.match(geocodeCalls[1].options.headers['User-Agent'], /ProjetoEntregas/);
-  assert.equal((await request('/api/address/street?street=Rua%20das%20Flores&city=Curitiba&state=PR')).response.status, 200);
-  assert.equal(geocodeCalls.length, 2);
-  assert.equal((await request('/api/address/street?street=Outra&city=Curitiba&state=PR')).response.status, 429);
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-  failGeocode = true;
-  const unavailable = await request('/api/address/street?street=Outra&city=Curitiba&state=PR');
-  failGeocode = false;
-  assert.equal(unavailable.response.status, 502); assert.equal(unavailable.body.resultados, undefined);
+  assert.equal((await request('/api/address/street?street=Rua%20das%20Flores')).response.status, 404);
 });

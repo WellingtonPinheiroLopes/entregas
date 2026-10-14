@@ -10,7 +10,7 @@ const MySQLSessionStore = require('./src/mysql-session-store');
 const SESSION_MS = Number(process.env.SESSION_MAX_AGE_MS) || 8 * 60 * 60 * 1000;
 const PUBLIC_USER = 'id, nome, email, acesso, criado_em, atualizado_em';
 
-function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = false, fetchImpl = globalThis.fetch } = {}) {
+function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = false } = {}) {
   if (!db) throw new Error('A conexão com o banco de dados é obrigatória.');
   const app = express();
   const secureCookie = process.env.NODE_ENV === 'production';
@@ -114,41 +114,6 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
   };
   app.locals.authenticate = authenticate;
   app.locals.requireAccess = requireAccess;
-
-  const addressCache = new Map();
-  let lastGeocodeRequestAt = 0;
-  const geocodingUrl = process.env.GEOCODING_URL || 'https://nominatim.openstreetmap.org/search';
-  app.get('/api/address/street', authenticate, requireAccess('administrador'), async (req, res) => {
-    const street = typeof req.query.street === 'string' ? req.query.street.trim() : '';
-    const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
-    const state = typeof req.query.state === 'string' ? req.query.state.trim() : '';
-    if (!street || street.length > 150 || city.length > 100 || state.length > 100) {
-      return res.status(400).json({ erro: 'Informe uma rua com até 150 caracteres; cidade e estado são opcionais.' });
-    }
-    const cacheKey = `${street.toLocaleLowerCase()}|${city.toLocaleLowerCase()}|${state.toLocaleLowerCase()}`;
-    const cached = addressCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) return res.set('Cache-Control', 'private, max-age=300').json({ resultados: cached.results });
-    if (Date.now() - lastGeocodeRequestAt < 1000) return res.status(429).json({ erro: 'A busca de endereços está temporariamente limitada. Aguarde um segundo e tente novamente.' });
-    lastGeocodeRequestAt = Date.now();
-    const stateNames = { AC: 'Acre', AL: 'Alagoas', AP: 'Amapá', AM: 'Amazonas', BA: 'Bahia', CE: 'Ceará', DF: 'Distrito Federal', ES: 'Espírito Santo', GO: 'Goiás', MA: 'Maranhão', MT: 'Mato Grosso', MS: 'Mato Grosso do Sul', MG: 'Minas Gerais', PA: 'Pará', PB: 'Paraíba', PR: 'Paraná', PE: 'Pernambuco', PI: 'Piauí', RJ: 'Rio de Janeiro', RN: 'Rio Grande do Norte', RS: 'Rio Grande do Sul', RO: 'Rondônia', RR: 'Roraima', SC: 'Santa Catarina', SP: 'São Paulo', SE: 'Sergipe', TO: 'Tocantins' };
-    const params = new URLSearchParams({ street, country: 'Brasil', format: 'jsonv2', addressdetails: '1', limit: '8' });
-    if (city) params.set('city', city);
-    if (state) params.set('state', stateNames[state.toLocaleUpperCase('pt-BR')] || state);
-    try {
-      const response = await fetchImpl(`${geocodingUrl}?${params}`, {
-        headers: { Accept: 'application/json', 'User-Agent': 'ProjetoEntregas/1.0 (admin address lookup)' },
-        signal: AbortSignal.timeout(7000),
-      });
-      if (!response.ok) return res.status(502).json({ erro: 'A busca de endereços está indisponível. Tente novamente mais tarde.' });
-      const results = await response.json();
-      if (!Array.isArray(results)) return res.status(502).json({ erro: 'O serviço de endereços retornou uma resposta inválida.' });
-      addressCache.set(cacheKey, { results, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
-      if (addressCache.size > 200) addressCache.delete(addressCache.keys().next().value);
-      res.set('Cache-Control', 'private, max-age=300').json({ resultados: results });
-    } catch {
-      res.status(502).json({ erro: 'A busca de endereços está indisponível. Tente novamente mais tarde.' });
-    }
-  });
 
   app.get('/api/auth/me', authenticate, (req, res) => {
     res.set('Cache-Control', 'no-store').json({ usuario: req.user, csrfToken: req.session.csrfToken });

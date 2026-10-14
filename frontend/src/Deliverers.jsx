@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { lookupCep, mergeStreetResult, mergeViaCep } from './address.js'
+import { lookupCep, mergeViaCep } from './address.js'
 
 const emptyForm = { nome: '', cpf: '', cidade: '', estado: '', cep: '', endereco: '', quadra: '', lote: '', numero: '', setor: '' }
 const states = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO']
@@ -18,15 +18,9 @@ export default function Deliverers({ api, csrfToken, onExpired }) {
   const [notice, setNotice] = useState('')
   const [cepLoading, setCepLoading] = useState(false)
   const [cepMessage, setCepMessage] = useState('')
-  const [streetLoading, setStreetLoading] = useState(false)
-  const [streetMessage, setStreetMessage] = useState('')
-  const [results, setResults] = useState([])
   const [formOpen, setFormOpen] = useState(false)
   const cepRequest = useRef(0)
   const listRequest = useRef(0)
-  const streetTimer = useRef(null)
-  const streetRequest = useRef(0)
-  const skipStreetSearch = useRef('')
 
   const refresh = useCallback(async (term = query, showLoading = true) => {
     const requestId = ++listRequest.current
@@ -58,11 +52,9 @@ export default function Deliverers({ api, csrfToken, onExpired }) {
     }, 250)
     return () => { clearTimeout(timer); controller.abort() }
   }, [form.cep])
-  useEffect(() => () => { clearTimeout(streetTimer.current); streetRequest.current += 1 }, [])
-
-  function startNew() { setFormOpen(true); setSelected(null); setForm({ ...emptyForm }); setError(''); setNotice(''); setCepMessage(''); setStreetMessage(''); setResults([]) }
-  function closeForm() { clearTimeout(streetTimer.current); streetRequest.current += 1; setStreetLoading(false); setFormOpen(false); setSelected(null); setForm({ ...emptyForm }); setError(''); setCepMessage(''); setResults([]) }
-  function startEdit(item) { clearTimeout(streetTimer.current); streetRequest.current += 1; setFormOpen(true); setSelected(item); setForm(Object.fromEntries(Object.keys(emptyForm).map((key) => [key, item[key] || '']))); setError(''); setNotice(''); setCepMessage(''); setStreetMessage(''); setResults([]) }
+  function startNew() { setFormOpen(true); setSelected(null); setForm({ ...emptyForm }); setError(''); setNotice(''); setCepMessage('') }
+  function closeForm() { setFormOpen(false); setSelected(null); setForm({ ...emptyForm }); setError(''); setCepMessage('') }
+  function startEdit(item) { setFormOpen(true); setSelected(item); setForm(Object.fromEntries(Object.keys(emptyForm).map((key) => [key, item[key] || '']))); setError(''); setNotice(''); setCepMessage('') }
   async function save(event) {
     event.preventDefault(); setError(''); setNotice('')
     if (!form.nome.trim()) { setError('Informe o nome completo.'); return }
@@ -85,43 +77,6 @@ export default function Deliverers({ api, csrfToken, onExpired }) {
       setFormOpen(true); setSelected(result.entregador); setForm(Object.fromEntries(Object.keys(emptyForm).map((key) => [key, result.entregador[key] || '']))); setError(''); setNotice('')
     } catch (requestError) { setError(requestError.message); if (/autenticação|sessão inválida/i.test(requestError.message)) onExpired() }
   }
-  useEffect(() => {
-    clearTimeout(streetTimer.current)
-    const street = form.endereco.trim(), city = form.cidade.trim(), state = form.estado.trim().toUpperCase()
-    const searchKey = `${street}|${city}|${state}`
-    const requestId = ++streetRequest.current
-    if (skipStreetSearch.current === searchKey) { skipStreetSearch.current = ''; return undefined }
-    if (digits(form.cep).length || street.length < 3) {
-      setResults([]); setStreetLoading(false); setStreetMessage(''); return undefined
-    }
-    setStreetMessage('')
-    streetTimer.current = setTimeout(async () => {
-      setStreetLoading(true)
-      try {
-        const params = new URLSearchParams({ street })
-        if (city) params.set('city', city)
-        if (state) params.set('state', state)
-        const { resultados: matches } = await api(`/address/street?${params}`)
-        if (requestId !== streetRequest.current) return
-        setResults(matches)
-        setStreetMessage(matches.length ? 'Selecione o endereço correspondente.' : 'Nenhum endereço encontrado. Você pode preencher manualmente.')
-      } catch (requestError) {
-        if (requestId !== streetRequest.current) return
-        setResults([]); setStreetMessage(`${requestError.message || 'Não foi possível pesquisar.'} Seus dados foram mantidos.`)
-        if (/autenticação|sessão inválida/i.test(requestError.message)) onExpired()
-      } finally { if (requestId === streetRequest.current) setStreetLoading(false) }
-    }, 650)
-    return () => clearTimeout(streetTimer.current)
-  }, [api, form.endereco, form.cidade, form.estado, form.cep, onExpired])
-  function chooseAddress(result) {
-    const merged = mergeStreetResult(form, result)
-    skipStreetSearch.current = `${merged.endereco}|${merged.cidade}|${merged.estado}`
-    setForm(merged)
-    const postcode = result.address?.postcode ? digits(result.address.postcode) : ''
-    setStreetMessage(postcode ? 'Endereço selecionado. Confira e ajuste os campos se necessário.' : 'Endereço selecionado; a busca não retornou CEP. Você pode preencher o CEP manualmente.')
-    setResults([])
-  }
-
   return <section className="users-page deliverers-page" aria-labelledby="deliverers-title">
     <header className="account-heading users-heading"><div><span className="section-label"><i /> ADMINISTRAÇÃO</span><h1 id="deliverers-title">Cadastro de entregadores</h1><p>Cadastre e consulte os endereços dos entregadores.</p></div><span className="users-heading-icon" aria-hidden="true">⌖</span></header>
     {error && <p className="error-message" role="alert">{error}</p>}{notice && <p className="success-message" role="status">{notice}</p>}
@@ -132,7 +87,7 @@ export default function Deliverers({ api, csrfToken, onExpired }) {
         <label className="account-field">Nome completo *<input autoComplete="name" maxLength={150} required value={form.nome} onChange={(event) => setForm({ ...form, nome: event.target.value })} /></label>
         <label className="account-field">CPF (opcional)<input inputMode="numeric" autoComplete="off" placeholder="000.000.000-00" value={cpfMask(form.cpf)} onChange={(event) => setForm({ ...form, cpf: cpfMask(event.target.value) })} /></label>
         <label className="account-field">CEP<input inputMode="numeric" autoComplete="postal-code" placeholder="00000-000" value={cepMask(form.cep)} onChange={(event) => setForm({ ...form, cep: cepMask(event.target.value) })} />{cepLoading && <small><span className="spinner" /> Consultando CEP...</small>}{cepMessage && <small role="status">{cepMessage}</small>}</label>
-        <label className="account-field">Rua / Logradouro *<input autoComplete="address-line1" maxLength={255} required value={form.endereco} onChange={(event) => { setForm({ ...form, endereco: event.target.value }); setResults([]) }} />{streetLoading && <small><span className="spinner" /> Pesquisando endereços...</small>}{streetMessage && <small role="status">{streetMessage}</small>}{results.length > 0 && <ul className="address-results">{results.map((result) => <li key={result.place_id}><button type="button" onClick={() => chooseAddress(result)}>{result.display_name}{result.address?.postcode && <small>CEP: {result.address.postcode}</small>}</button></li>)}</ul>}</label>
+        <label className="account-field">Rua / Logradouro *<input autoComplete="address-line1" maxLength={255} required value={form.endereco} onChange={(event) => setForm({ ...form, endereco: event.target.value })} /></label>
         <label className="account-field">Quadra<input maxLength={50} value={form.quadra} onChange={(event) => setForm({ ...form, quadra: event.target.value })} /></label>
         <label className="account-field">Lote<input maxLength={50} value={form.lote} onChange={(event) => setForm({ ...form, lote: event.target.value })} /></label>
         <label className="account-field">Número (manual)<input autoComplete="address-line2" maxLength={30} value={form.numero} onChange={(event) => setForm({ ...form, numero: event.target.value })} /></label>
