@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { lookupCep, mergeViaCep } from './address.js'
+import { deleteDelivererRequest, removeDelivererFromList } from './deliverers.js'
 
 const emptyForm = { nome: '', cpf: '', cidade: '', estado: '', cep: '', endereco: '', quadra: '', lote: '', numero: '', setor: '' }
 const states = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO']
@@ -14,6 +15,9 @@ export default function Deliverers({ api, csrfToken, onExpired }) {
   const [form, setForm] = useState(emptyForm)
   const [selected, setSelected] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [cepLoading, setCepLoading] = useState(false)
@@ -77,11 +81,23 @@ export default function Deliverers({ api, csrfToken, onExpired }) {
       setFormOpen(true); setSelected(result.entregador); setForm(Object.fromEntries(Object.keys(emptyForm).map((key) => [key, result.entregador[key] || '']))); setError(''); setNotice('')
     } catch (requestError) { setError(requestError.message); if (/autenticação|sessão inválida/i.test(requestError.message)) onExpired() }
   }
+  async function deleteDeliverer() {
+    if (!deleteTarget || deleting) return
+    setDeleting(true); setDeleteError('')
+    try {
+      const result = await deleteDelivererRequest(api, deleteTarget.id, csrfToken)
+      setItems((current) => removeDelivererFromList(current, deleteTarget.id))
+      setDeleteTarget(null); setNotice(result.mensagem); setError(''); await refresh(query)
+    } catch (requestError) {
+      setDeleteError(requestError.message || 'Não foi possível excluir o entregador. Tente novamente.')
+      if (/autenticação|sessão inválida/i.test(requestError.message)) onExpired()
+    } finally { setDeleting(false) }
+  }
   return <section className="users-page deliverers-page" aria-labelledby="deliverers-title">
     <header className="account-heading users-heading"><div><span className="section-label"><i /> ADMINISTRAÇÃO</span><h1 id="deliverers-title">Cadastro de entregadores</h1><p>Cadastre e consulte os endereços dos entregadores.</p></div><span className="users-heading-icon" aria-hidden="true">⌖</span></header>
     {error && <p className="error-message" role="alert">{error}</p>}{notice && <p className="success-message" role="status">{notice}</p>}
     <div className="deliverer-toolbar"><label className="users-search">Pesquisar por nome ou CPF<input type="search" placeholder="Ex.: Ana ou 123.456.789-00" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && refresh(query)} /></label><button className="submit-button account-submit" type="button" onClick={startNew}>＋ Novo entregador</button></div>
-    {loading ? <div className="account-loading"><span className="spinner" /> Carregando entregadores...</div> : items.length === 0 ? <div className="users-empty"><span aria-hidden="true">⌕</span><h2>{query ? 'Nenhum entregador encontrado' : 'Nenhum entregador cadastrado'}</h2><p>{query ? 'Tente pesquisar por outro nome ou CPF.' : 'Cadastre o primeiro entregador para começar.'}</p></div> : <div className="users-table-wrap"><table className="users-table"><thead><tr><th>Nome</th><th>CPF</th><th>Endereço</th><th>Ações</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td data-label="Nome"><span className="user-name-cell"><span className="user-mini-avatar">{item.nome.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}</span>{item.nome}</span></td><td data-label="CPF">{item.cpf ? cpfMask(item.cpf) : 'Não informado'}</td><td data-label="Endereço">{[item.endereco, item.numero, item.setor].filter(Boolean).join(', ')}</td><td data-label="Ações"><button className="edit-user-button" type="button" onClick={() => viewDetails(item)}>Ver</button> <button className="edit-user-button" type="button" onClick={() => startEdit(item)}>Editar</button></td></tr>)}</tbody></table></div>}
+    {loading ? <div className="account-loading"><span className="spinner" /> Carregando entregadores...</div> : items.length === 0 ? <div className="users-empty"><span aria-hidden="true">⌕</span><h2>{query ? 'Nenhum entregador encontrado' : 'Nenhum entregador cadastrado'}</h2><p>{query ? 'Tente pesquisar por outro nome ou CPF.' : 'Cadastre o primeiro entregador para começar.'}</p></div> : <div className="users-table-wrap"><table className="users-table"><thead><tr><th>Nome</th><th>CPF</th><th>Endereço</th><th>Ações</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td data-label="Nome"><span className="user-name-cell"><span className="user-mini-avatar">{item.nome.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}</span>{item.nome}</span></td><td data-label="CPF">{item.cpf ? cpfMask(item.cpf) : 'Não informado'}</td><td data-label="Endereço">{[item.endereco, item.numero, item.setor].filter(Boolean).join(', ')}</td><td data-label="Ações"><div className="deliverer-row-actions"><button className="edit-user-button" type="button" onClick={() => viewDetails(item)}>Ver</button> <button className="edit-user-button" type="button" onClick={() => startEdit(item)}>Editar</button> <button className="edit-user-button delete-deliverer-button" type="button" aria-label={`Excluir ${item.nome}`} onClick={() => { setDeleteTarget(item); setDeleteError('') }}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 6h11m-9.5 0 .6 10h7.8L15 6M8 6V4.5h4V6m-3 2.5v5m2-5v5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg><span>Excluir</span></button></div></td></tr>)}</tbody></table></div>}
     {formOpen && <div className="user-modal-backdrop" role="presentation"><section className="user-modal deliverer-modal" role="dialog" aria-modal="true" aria-labelledby="deliverer-form-title"><header className="account-heading"><div><span className="section-label">DADOS DO ENTREGADOR</span><h2 id="deliverer-form-title">{selected ? 'Consultar / editar cadastro' : 'Novo entregador'}</h2><p>Campos marcados com * são obrigatórios.</p></div><button className="modal-close" type="button" aria-label="Fechar" onClick={closeForm}>×</button></header>
       <form onSubmit={save} noValidate><div className="deliverer-fields">
         <label className="account-field">Nome completo *<input autoComplete="name" maxLength={150} required value={form.nome} onChange={(event) => setForm({ ...form, nome: event.target.value })} /></label>
@@ -92,10 +108,11 @@ export default function Deliverers({ api, csrfToken, onExpired }) {
         <label className="account-field">Lote<input maxLength={50} value={form.lote} onChange={(event) => setForm({ ...form, lote: event.target.value })} /></label>
         <label className="account-field">Número (manual)<input autoComplete="address-line2" maxLength={30} value={form.numero} onChange={(event) => setForm({ ...form, numero: event.target.value })} /></label>
         <label className="account-field">Setor / bairro<input autoComplete="address-level3" maxLength={120} value={form.setor} onChange={(event) => setForm({ ...form, setor: event.target.value })} /></label>
-        <label className="account-field">Cidade<input autoComplete="address-level2" maxLength={100} value={form.cidade} onChange={(event) => { setForm({ ...form, cidade: event.target.value }); setResults([]) }} /></label>
-        <label className="account-field">Estado / UF<input autoComplete="address-level1" maxLength={2} value={form.estado} onChange={(event) => { setForm({ ...form, estado: event.target.value.toUpperCase().slice(0, 2) }); setResults([]) }} /></label>
+        <label className="account-field">Cidade<input autoComplete="address-level2" maxLength={100} value={form.cidade} onChange={(event) => setForm({ ...form, cidade: event.target.value })} /></label>
+        <label className="account-field">Estado / UF<input autoComplete="address-level1" maxLength={2} value={form.estado} onChange={(event) => setForm({ ...form, estado: event.target.value.toUpperCase().slice(0, 2) })} /></label>
       </div>
       {error && <p className="error-message" role="alert">{error}</p>}<div className="account-actions"><button className="secondary-button" type="button" disabled={saving} onClick={closeForm}>Cancelar</button><button className="submit-button account-submit" type="submit" disabled={saving}>{saving ? <><span className="spinner" /> Salvando...</> : selected ? 'Salvar alterações' : 'Cadastrar entregador'}</button></div></form>
     </section></div>}
+    {deleteTarget && <div className="user-modal-backdrop" role="presentation"><section className="user-modal delete-confirmation" role="alertdialog" aria-modal="true" aria-labelledby="delete-deliverer-title" aria-describedby="delete-deliverer-description"><div className="delete-confirmation-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 7h14m-12 0 .8 13h8.4L17 7M9 7V4h6v3m-5 3v7m4-7v7" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg></div><h2 id="delete-deliverer-title">Excluir entregador?</h2><p className="delete-confirmation-name">{deleteTarget.nome}</p><p id="delete-deliverer-description">Esta exclusão é permanente. O cadastro do entregador será removido.</p>{deleteError && <p className="error-message" role="alert">{deleteError}</p>}<div className="account-actions"><button className="secondary-button" type="button" disabled={deleting} onClick={() => { setDeleteTarget(null); setDeleteError('') }}>Cancelar</button><button className="danger-button" type="button" disabled={deleting} onClick={deleteDeliverer}>{deleting ? <><span className="spinner" /> Excluindo...</> : 'Excluir entregador'}</button></div></section></div>}
   </section>
 }

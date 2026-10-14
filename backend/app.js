@@ -351,6 +351,20 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
     }
   });
 
+  app.delete('/api/deliverers/:id', csrfGuard, authenticate, requireAccess('administrador'), async (req, res, next) => {
+    if (!/^\d+$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id)) || Number(req.params.id) < 1) return res.status(400).json({ erro: 'Identificador inválido.' });
+    try {
+      const [result] = await db.execute('DELETE FROM entregadores WHERE id = ?', [req.params.id]);
+      if (!result.affectedRows) return res.status(404).json({ erro: 'Entregador não encontrado.' });
+      res.status(200).json({ mensagem: 'Entregador excluído com sucesso.' });
+    } catch (error) {
+      if (error.code === 'ER_ROW_IS_REFERENCED_2' || error.code === 'ER_ROW_IS_REFERENCED') {
+        return res.status(409).json({ erro: 'Este entregador possui registros relacionados e não pode ser excluído.' });
+      }
+      next(error);
+    }
+  });
+
   app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada.', caminho: req.path }));
   app.use((error, req, res, next) => {
     console.error('Erro interno:', error.code || 'erro inesperado');
