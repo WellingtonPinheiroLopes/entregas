@@ -15,43 +15,64 @@ test('normaliza CEP com máscara e sem máscara, validando oito dígitos', () =>
   assert.equal(normalizeDestinationCep(''), '')
 })
 
-test('Google Maps prioriza CEP e complementa com cidade, UF e endereço codificado', () => {
-  const links = createNavigationLinks(fullSnapshot)
+test('CEP válido gera somente CEP formatado como destino no Google Maps', () => {
+  const links = createNavigationLinks({ ...fullSnapshot, cep_destino: '74485440' })
   const url = new URL(links.googleMaps)
   assert.equal(url.origin, 'https://www.google.com')
   assert.equal(url.pathname, '/maps/dir/')
   assert.equal(url.searchParams.get('api'), '1')
-  assert.equal(url.searchParams.get('destination'), 'CEP 01001000, São Paulo, SP, Rua São João, Nº 25, Quadra A, Lote 03, Jardim América')
+  assert.equal(url.searchParams.get('destination'), '74485-440')
   assert.equal(url.searchParams.get('travelmode'), 'driving')
   assert.equal(url.searchParams.get('dir_action'), 'navigate')
-  assert.match(url.search, /%C3%A3|%C3%A9/)
-  assert.match(links.searchQuery, /^CEP 01001000, São Paulo, SP,/)
-  const unmaskedUrl = new URL(createNavigationLinks({ ...fullSnapshot, cep_destino: '01001000' }).googleMaps)
-  assert.equal(unmaskedUrl.searchParams.get('destination'), url.searchParams.get('destination'))
+  assert.equal(links.searchQuery, '74485-440')
+  const masked = createNavigationLinks({ ...fullSnapshot, cep_destino: '74485-440' })
+  assert.equal(masked.searchQuery, '74485-440')
+  assert.equal(new URL(masked.googleMaps).searchParams.get('destination'), '74485-440')
 })
 
-test('CEP ausente ou inválido usa fallback completo em vez de pesquisar somente a rua', () => {
+test('CEP ausente ou inválido usa somente rua, bairro, cidade e estado', () => {
   for (const cep of ['', '1234567', '123456789']) {
     const links = createNavigationLinks({ ...fullSnapshot, cep_destino: cep })
     assert.equal(links.isValidCep, false)
     assert.equal(links.canNavigate, true)
-    assert.equal(links.searchQuery, 'Rua São João, Nº 25, Quadra A, Lote 03 - Jardim América, São Paulo - SP')
+    assert.equal(links.searchQuery, 'Rua São João, Jardim América, São Paulo - SP')
     assert.equal(new URL(links.googleMaps).searchParams.get('destination'), links.searchQuery)
     assert.equal(new URL(links.waze).searchParams.get('q'), links.searchQuery)
   }
 })
 
-test('fallback monta o formato especificado sem CEP', () => {
-  const snapshot = { endereco_destino: 'Av. Joaquim Pedro Dias', setor_destino: 'Vila Adelia', cidade_destino: 'Goiânia', estado_destino: 'GO', cep_destino: '' }
-  assert.equal(buildFallbackAddress(snapshot), 'Av. Joaquim Pedro Dias - Vila Adelia, Goiânia - GO')
-  assert.equal(createNavigationLinks(snapshot).searchQuery, 'Av. Joaquim Pedro Dias - Vila Adelia, Goiânia - GO')
+test('fallback monta o formato solicitado sem CEP', () => {
+  const snapshot = { endereco_destino: 'Avenida Joaquim Pedro Dias', setor_destino: 'Goiá II', cidade_destino: 'Goiânia', estado_destino: 'GO', cep_destino: '' }
+  assert.equal(buildFallbackAddress(snapshot), 'Avenida Joaquim Pedro Dias, Goiá II, Goiânia - GO')
+  const links = createNavigationLinks(snapshot)
+  assert.equal(links.searchQuery, 'Avenida Joaquim Pedro Dias, Goiá II, Goiânia - GO')
+  assert.equal(new URL(links.googleMaps).searchParams.get('destination'), links.searchQuery)
+  assert.equal(new URL(links.waze).searchParams.get('q'), links.searchQuery)
+  assert.match(links.googleMaps, /Goi%C3%A2/)
+  assert.match(links.waze, /Goi%C3%A2/)
 })
 
-test('campos vazios não deixam hífens ou vírgulas, e cidade/bairro repetidos aparecem uma vez', () => {
+test('bairro ausente não deixa pontuação sobrando e rua/cidade/estado permanecem', () => {
+  const snapshot = { endereco_destino: 'Avenida Joaquim Pedro Dias', setor_destino: '', cidade_destino: 'Goiânia', estado_destino: 'GO', cep_destino: '' }
+  assert.equal(buildFallbackAddress(snapshot), 'Avenida Joaquim Pedro Dias, Goiânia - GO')
+})
+
+test('campos vazios não deixam hífens ou vírgulas, e valores duplicados aparecem uma vez', () => {
   const snapshot = { endereco_destino: 'Rua A', numero_destino: '', quadra_destino: '', lote_destino: '', setor_destino: 'Campinas', cidade_destino: 'Campinas', estado_destino: 'SP', cep_destino: '  ' }
   assert.equal(formatDestinationAddress(snapshot), 'Rua A, Campinas, SP')
   assert.equal(buildDestinationQuery(snapshot), 'Rua A, Campinas - SP')
   assert.equal(buildFallbackAddress({ cidade_destino: 'Goiânia', estado_destino: 'GO' }), 'Goiânia - GO')
+})
+
+test('quadra, lote, número e complemento nunca entram na busca, e ambos os serviços usam texto idêntico', () => {
+  const links = createNavigationLinks({
+    endereco_destino: 'Avenida Joaquim Pedro Dias', setor_destino: 'Goiá II', cidade_destino: 'Goiânia', estado_destino: 'GO', cep_destino: '',
+    numero_destino: '99', quadra_destino: 'Q1', lote_destino: 'L2', complemento_destino: 'fundos', observacoes: 'portão azul',
+  })
+  const googleQuery = new URL(links.googleMaps).searchParams.get('destination')
+  const wazeQuery = new URL(links.waze).searchParams.get('q')
+  assert.equal(googleQuery, 'Avenida Joaquim Pedro Dias, Goiá II, Goiânia - GO')
+  assert.equal(wazeQuery, googleQuery)
 })
 
 test('sem CEP válido, endereço insuficiente não cria URLs', () => {
@@ -67,11 +88,11 @@ test('sem CEP válido, endereço insuficiente não cria URLs', () => {
   }
 })
 
-test('Waze usa busca textual por CEP, cidade e endereço sem inventar coordenadas', () => {
-  const url = new URL(createNavigationLinks(fullSnapshot).waze)
+test('Waze recebe somente o CEP formatado e não inventa coordenadas', () => {
+  const url = new URL(createNavigationLinks({ ...fullSnapshot, cep_destino: '74485440' }).waze)
   assert.equal(url.origin, 'https://waze.com')
   assert.equal(url.pathname, '/ul')
-  assert.equal(url.searchParams.get('q'), 'CEP 01001000, São Paulo, SP, Rua São João, Nº 25, Quadra A, Lote 03, Jardim América')
+  assert.equal(url.searchParams.get('q'), '74485-440')
   assert.equal(url.searchParams.has('navigate'), false)
   assert.equal(url.searchParams.has('ll'), false)
 })
@@ -79,8 +100,9 @@ test('Waze usa busca textual por CEP, cidade e endereço sem inventar coordenada
 test('links usam exclusivamente o snapshot histórico e não alteram o endereço salvo', () => {
   const before = { ...fullSnapshot }
   const links = createNavigationLinks(fullSnapshot)
-  assert.match(links.googleMaps, /CEP\+01001000/)
-  assert.equal(links.searchQuery.includes('São Paulo'), true)
+  assert.equal(new URL(links.googleMaps).searchParams.get('destination'), '01001-000')
+  assert.equal(new URL(links.waze).searchParams.get('q'), '01001-000')
+  assert.equal(links.searchQuery.includes('São Paulo'), false)
   assert.deepEqual(fullSnapshot, before)
 })
 

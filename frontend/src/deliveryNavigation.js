@@ -34,38 +34,26 @@ function uniqueParts(parts) {
 }
 
 export function buildFallbackAddress(delivery = {}) {
-  const streetDetails = uniqueParts([
-    delivery.endereco_destino,
-    delivery.numero_destino && `Nº ${text(delivery.numero_destino)}`,
-    delivery.quadra_destino && `Quadra ${text(delivery.quadra_destino)}`,
-    delivery.lote_destino && `Lote ${text(delivery.lote_destino)}`,
-  ])
-  const streetKeys = new Set(streetDetails.map(comparisonKey))
+  const street = text(delivery.endereco_destino)
   const city = text(delivery.cidade_destino)
   const state = text(delivery.estado_destino)
-  const sectorValue = text(delivery.setor_destino)
-  const sectorKey = comparisonKey(sectorValue)
-  const sector = sectorKey && !streetKeys.has(sectorKey) && sectorKey !== comparisonKey(city) && sectorKey !== comparisonKey(state) ? sectorValue : ''
-  const cityValue = comparisonKey(city) && !streetKeys.has(comparisonKey(city)) ? city : ''
-  const stateValue = comparisonKey(state) && !streetKeys.has(comparisonKey(state)) && comparisonKey(state) !== comparisonKey(cityValue) ? state : ''
-  const streetAndSector = [streetDetails.join(', '), sector].filter(Boolean).join(' - ')
-  const cityAndState = [cityValue, stateValue].filter(Boolean).join(' - ')
+  const streetKey = comparisonKey(street)
+  const cityKey = comparisonKey(city)
+  const stateKey = comparisonKey(state)
+  const sector = [delivery.setor_destino].map(text).find((part) => {
+    const key = comparisonKey(part)
+    return key && key !== streetKey && key !== cityKey && key !== stateKey
+  }) || ''
+  const cityValue = cityKey && cityKey !== streetKey ? city : ''
+  const cityAndState = uniqueParts([cityValue, stateKey !== streetKey ? state : '']).join(' - ')
+  const streetAndSector = uniqueParts([street, sector]).join(', ')
   return [streetAndSector, cityAndState].filter(Boolean).join(', ')
 }
 
 export function buildDestinationQuery(delivery = {}) {
   const cep = normalizeDestinationCep(delivery.cep_destino)
   if (cep.length === 8) {
-    return uniqueParts([
-      `CEP ${cep}`,
-      delivery.cidade_destino,
-      delivery.estado_destino,
-      delivery.endereco_destino,
-      delivery.numero_destino && `Nº ${text(delivery.numero_destino)}`,
-      delivery.quadra_destino && `Quadra ${text(delivery.quadra_destino)}`,
-      delivery.lote_destino && `Lote ${text(delivery.lote_destino)}`,
-      delivery.setor_destino,
-    ]).join(', ')
+    return `${cep.slice(0, 5)}-${cep.slice(5)}`
   }
   return buildFallbackAddress(delivery)
 }
