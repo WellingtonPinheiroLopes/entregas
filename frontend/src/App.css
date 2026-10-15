@@ -52,6 +52,18 @@ button:disabled { cursor: wait; opacity: .7; }.spinner { width: 17px; height: 17
 .delivery-filters { display: grid; grid-template-columns: repeat(5, minmax(130px, 1fr)); gap: 10px; margin: -7px 0 18px; }
 .delivery-filters label { display: flex; flex-direction: column; gap: 6px; color: #52665a; font-size: 11px; font-weight: 600; }
 .delivery-filters select, .delivery-filters input, .delivery-fields select, .delivery-modal select { min-width: 0; height: 40px; padding: 0 10px; border: 1px solid #dce6df; border-radius: 8px; color: var(--ink); background: #fff; font: inherit; }
+.record-search { position: relative; min-width: 0; }
+.record-search > label { color: #52665a; font-size: 12px; font-weight: 600; }
+.delivery-filters .record-search > label { font-size: 11px; }
+.record-search-selected { color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.4; }
+.record-search-clear { align-self: flex-start; padding: 0; border: 0; color: var(--green-800); background: transparent; font: inherit; font-size: 11px; cursor: pointer; }
+.record-search-results { position: absolute; z-index: 20; top: calc(100% - 4px); right: 0; left: 0; max-height: 260px; overflow-y: auto; border: 1px solid #dce6df; border-radius: 9px; background: #fff; box-shadow: 0 12px 28px #10251c24; }
+.record-search-option { display: flex; width: 100%; flex-direction: column; gap: 3px; padding: 10px 12px; border: 0; border-bottom: 1px solid #edf2ee; color: var(--ink); background: #fff; text-align: left; cursor: pointer; }
+.record-search-option:last-child { border-bottom: 0; }
+.record-search-option:hover, .record-search-option-active { background: #f1f7f2; }
+.record-search-option strong { font-size: 12px; }
+.record-search-option span, .record-search-message { color: var(--muted); font-size: 11px; font-weight: 400; }
+.record-search-message { margin: 0; padding: 11px 12px; }
 .delivery-status { display: inline-flex; align-items: center; width: fit-content; padding: 6px 9px; border-radius: 18px; font-size: 10px; font-weight: 700; white-space: nowrap; }
 .status-na_farmacia { color: #765d13; background: #fbf4df; }
 .status-em_transito { color: #245d82; background: #e8f4fb; }

@@ -22,7 +22,8 @@ const db = {
       if (failQuery) { const error = new Error('database unavailable'); error.code = 'ECONNREFUSED'; throw error; }
       if (sql.includes('WHERE nome LIKE')) {
         const nameTerm = params[0].slice(1, -1).toLowerCase(); const cpfTerm = params[1].slice(1, -1);
-        return [[...clients.filter((client) => client.nome.toLowerCase().includes(nameTerm) || (client.cpf || '').includes(cpfTerm))]];
+        const matches = clients.filter((client) => client.nome.toLowerCase().includes(nameTerm) || (client.cpf || '').includes(cpfTerm)).slice(0, 10);
+        return [[...matches.map(({ id, nome, cpf, cep, endereco, numero, quadra, lote, setor, cidade, estado }) => ({ id, nome, cpf, cep, endereco, numero, quadra, lote, setor, cidade, estado }))]];
       }
       if (sql.includes('WHERE id')) return [[...clients.filter((client) => String(client.id) === String(params[0]))]];
       return [[...clients].reverse()];
@@ -120,6 +121,22 @@ test('pesquisa por nome ou CPF, consulta e atualiza cadastro', async () => {
   assert.equal(numberUpdated.response.status, 200); assert.equal(numberUpdated.body.cliente.numero, '456 apto 2');
   assert.equal((await mutate('PATCH', '/api/clients/999', { nome: 'Ausente' })).response.status, 404);
   assert.equal((await mutate('PATCH', '/api/clients/1', { acesso: 'administrador' })).response.status, 400);
+});
+
+test('pesquisa de clientes é limitada a dez e retorna apenas dados necessários para seleção', async () => {
+  cookie = ''; await login('admin@example.com');
+  const added = Array.from({ length: 12 }, (_, index) => ({ id: 500 + index, nome: `Busca em massa ${index}`, cpf: null, observacao: 'não deve ser retornada' }));
+  clients.push(...added);
+  try {
+    const result = await request('/api/clients?q=Busca%20em%20massa');
+    assert.equal(result.response.status, 200); assert.equal(result.body.length, 10);
+    assert.equal(result.body[0].nome.startsWith('Busca em massa'), true);
+    assert.equal(Object.hasOwn(result.body[0], 'observacao'), false);
+    assert.equal(Object.hasOwn(result.body[0], 'atualizado_em'), false);
+  } finally {
+    for (const row of added) { const index = clients.indexOf(row); if (index >= 0) clients.splice(index, 1); }
+  }
+  assert.equal((await request('/api/clients?q=nenhum-resultado')).body.length, 0);
 });
 
 test('exclusão trata inexistência, vínculos e erros do banco sem revelar detalhes', async () => {

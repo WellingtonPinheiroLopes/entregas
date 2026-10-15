@@ -24,7 +24,7 @@ const db = {
     if (sql.startsWith('UPDATE usuarios SET nome = ?, email = ?')) { const row = users.find((user) => String(user.id) === String(params[2])); if (row) { row.nome = params[0]; row.email = params[1]; } return [{ affectedRows: row ? 1 : 0 }]; }
     if (sql.startsWith('UPDATE usuarios SET email = ?')) { const row = users.find((user) => String(user.id) === String(params[1])); if (row) row.email = params[0]; return [{ affectedRows: row ? 1 : 0 }]; }
     if (sql.startsWith('UPDATE usuarios SET nome = ?')) { const row = users.find((user) => String(user.id) === String(params[1])); if (row) row.nome = params[0]; return [{ affectedRows: row ? 1 : 0 }]; }
-    if (sql.includes('FROM entregadores d LEFT JOIN usuarios u')) { let selected = [...records]; if (sql.includes('WHERE d.id = ?')) selected = selected.filter((item) => String(item.id) === String(params[0])); if (sql.includes('WHERE d.nome LIKE')) selected = selected.filter((item) => item.nome.includes(params[0].slice(1, -1)) || (item.cpf || '').includes(params[1].slice(1, -1)) || (users.find((u) => u.id === item.usuario_id)?.email || '').includes(params[2].slice(1, -1))); const projected = selected.map((item) => ({ ...item, email: users.find((u) => u.id === item.usuario_id)?.email || null, acesso: users.find((u) => u.id === item.usuario_id)?.acesso || null })); return [sql.includes('ORDER BY') ? projected.reverse() : projected]; }
+    if (sql.includes('FROM entregadores d LEFT JOIN usuarios u')) { let selected = [...records]; if (sql.includes('WHERE d.id = ?')) selected = selected.filter((item) => String(item.id) === String(params[0])); if (sql.includes('WHERE d.nome LIKE')) selected = selected.filter((item) => item.nome.includes(params[0].slice(1, -1)) || (item.cpf || '').includes(params[1].slice(1, -1)) || (users.find((u) => u.id === item.usuario_id)?.email || '').includes(params[2].slice(1, -1))); const projected = sql.includes('SELECT d.id, d.nome, d.cpf, u.email') ? selected.map((item) => ({ id: item.id, nome: item.nome, cpf: item.cpf, email: users.find((u) => u.id === item.usuario_id)?.email || null })).slice(0, 10) : selected.map((item) => ({ ...item, email: users.find((u) => u.id === item.usuario_id)?.email || null, acesso: users.find((u) => u.id === item.usuario_id)?.acesso || null })); return [sql.includes('ORDER BY') ? projected.reverse() : projected]; }
     if (sql.includes('SELECT id, usuario_id FROM entregadores')) return [[...records.filter((item) => String(item.id) === String(params[0])).map(({ id, usuario_id }) => ({ id, usuario_id }))]];
     if (sql.includes('SELECT nome FROM entregadores')) return [[...records.filter((item) => String(item.id) === String(params[0])).map(({ nome }) => ({ nome }))]];
     if (sql.startsWith('UPDATE entregadores SET usuario_id')) { const item = records.find((row) => String(row.id) === String(params[1])); if (item) item.usuario_id = params[0]; return [{ affectedRows: item ? 1 : 0 }]; }
@@ -149,6 +149,20 @@ test('consulta, pesquisa, atualiza campos e trata IDs inválidos/inexistentes', 
   const privilegeAttempt = await mutate('PATCH', '/api/deliverers/1', { email: 'maria@example.com', nome: 'Não permitido', acesso: 'administrador' });
   assert.equal(privilegeAttempt.response.status, 200);
   assert.equal(users.find((user) => user.id === privilegeAttempt.body.entregador.usuario_id).acesso, 'entregador');
+});
+
+test('pesquisa de entregadores limita os resultados e não retorna dados internos de usuários', async () => {
+  cookie = ''; await login('admin@example.com');
+  const added = Array.from({ length: 12 }, (_, index) => ({ id: 900 + index, nome: `Entregador busca ${index}`, cpf: null, usuario_id: null }));
+  records.push(...added);
+  try {
+    const result = await request('/api/deliverers?q=Entregador%20busca');
+    assert.equal(result.response.status, 200); assert.equal(result.body.length, 10);
+    assert.deepEqual(Object.keys(result.body[0]).sort(), ['cpf', 'email', 'id', 'nome']);
+    assert.equal((await request('/api/deliverers?q=nao-existe')).body.length, 0);
+  } finally {
+    for (const row of added) { const index = records.indexOf(row); if (index >= 0) records.splice(index, 1); }
+  }
 });
 
 test('exclusão exige sessão, valida ID, preserva referências e trata falhas do banco', async () => {

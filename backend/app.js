@@ -247,6 +247,7 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
   const DELIVERER_FIELDS = ['nome', 'cpf', 'cidade', 'estado', 'cep', 'endereco', 'quadra', 'lote', 'numero', 'setor'];
   const DELIVERER_COLUMNS = 'd.id, d.nome, d.cpf, d.cidade, d.estado, d.cep, d.endereco, d.quadra, d.lote, d.numero, d.setor, d.usuario_id, u.email, u.acesso, d.criado_em, d.atualizado_em';
   const delivererSelect = `SELECT ${DELIVERER_COLUMNS} FROM entregadores d LEFT JOIN usuarios u ON u.id = d.usuario_id`;
+  const delivererSearchSelect = 'SELECT d.id, d.nome, d.cpf, u.email FROM entregadores d LEFT JOIN usuarios u ON u.id = d.usuario_id';
   const validEmail = (value) => typeof value === 'string' && value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
   const BRAZILIAN_STATES = new Set('AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' '));
   const validCpf = (cpf) => {
@@ -312,7 +313,7 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
       const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
       const digits = query.replace(/\D/g, '');
       const [rows] = query
-        ? await db.execute(`${delivererSelect} WHERE d.nome LIKE ? OR d.cpf LIKE ? OR u.email LIKE ? ORDER BY d.id DESC`, [`%${query}%`, `%${digits || query}%`, `%${query}%`])
+        ? await db.execute(`${delivererSearchSelect} WHERE d.nome LIKE ? OR d.cpf LIKE ? OR u.email LIKE ? ORDER BY d.nome ASC, d.id DESC LIMIT 10`, [`%${query}%`, `%${digits || query}%`, `%${query}%`])
         : await db.execute(`${delivererSelect} ORDER BY d.id DESC`);
       res.set('Cache-Control', 'no-store').json(rows);
     } catch (error) { next(error); }
@@ -418,6 +419,7 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
 
   const CLIENT_FIELDS = ['nome', 'cpf', 'cep', 'endereco', 'numero', 'quadra', 'lote', 'setor', 'cidade', 'estado', 'observacao'];
   const CLIENT_SELECT = 'id, nome, cpf, cep, endereco, numero, quadra, lote, setor, cidade, estado, observacao, criado_em, atualizado_em';
+  const CLIENT_SEARCH_SELECT = 'id, nome, cpf, cep, endereco, numero, quadra, lote, setor, cidade, estado';
   function parseClient(body, partial = false) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return { error: 'Envie dados válidos do cliente.' };
     if (Object.keys(body).some((key) => !CLIENT_FIELDS.includes(key))) return { error: 'Envie somente os campos do cadastro de cliente.' };
@@ -468,7 +470,7 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
       const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
       const digits = query.replace(/\D/g, '');
       const [rows] = query
-        ? await db.execute(`SELECT ${CLIENT_SELECT} FROM clientes WHERE nome LIKE ? OR cpf LIKE ? ORDER BY id DESC`, [`%${query}%`, `%${digits || query}%`])
+        ? await db.execute(`SELECT ${CLIENT_SEARCH_SELECT} FROM clientes WHERE nome LIKE ? OR cpf LIKE ? ORDER BY nome ASC, id DESC LIMIT 10`, [`%${query}%`, `%${digits || query}%`])
         : await db.execute(`SELECT ${CLIENT_SELECT} FROM clientes ORDER BY id DESC`);
       res.set('Cache-Control', 'no-store').json(rows);
     } catch (error) { next(error); }

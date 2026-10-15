@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { missingClientAddressFields, populateDeliveryAddress, requiresClientAddressConfirmation } from './deliveryAddress.js'
+import RecordSearch from './RecordSearch.jsx'
 
 const STATUS_LABELS = { na_farmacia: 'Na farmácia', em_transito: 'Em trânsito', concluida: 'Concluída', cancelada: 'Cancelada' }
 const emptyForm = { cliente_id: '', entregador_id: '', descricao: '', cep_destino: '', endereco_destino: '', quadra_destino: '', lote_destino: '', numero_destino: '', setor_destino: '', cidade_destino: '', estado_destino: '', observacoes: '' }
@@ -7,13 +8,16 @@ const digits = (value) => String(value || '').replace(/\D/g, '')
 const cepMask = (value) => digits(value).slice(0, 8).replace(/(\d{5})(\d)/, '$1-$2')
 const displayDate = (value) => value ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : '—'
 const addressSummary = (item) => [item.endereco_destino, item.numero_destino, item.quadra_destino && `Qd. ${item.quadra_destino}`, item.lote_destino && `Lt. ${item.lote_destino}`, item.setor_destino, item.cidade_destino, item.estado_destino].filter(Boolean).join(', ') || 'Endereço não informado'
+const clientDetails = (item) => [item.endereco && `${item.endereco}${item.numero ? `, ${item.numero}` : ''}`, item.cpf && `CPF ${item.cpf}`].filter(Boolean).join(' · ')
+const delivererDetails = (item) => [item.cpf && `CPF ${item.cpf}`, item.email].filter(Boolean).join(' · ')
 
-export default function Deliveries({ api, csrfToken, onExpired, onNavigate, onDeliveryChange }) {
+export default function Deliveries({ api, csrfToken, onExpired, onDeliveryChange }) {
   const [items, setItems] = useState(null)
-  const [clients, setClients] = useState([])
-  const [deliverers, setDeliverers] = useState([])
-  const [optionsLoading, setOptionsLoading] = useState(true)
   const [filters, setFilters] = useState({ q: '', status: '', cliente_id: '', entregador_id: '', de: '', ate: '' })
+  const [clientFilterQuery, setClientFilterQuery] = useState('')
+  const [clientFilterSelected, setClientFilterSelected] = useState(null)
+  const [delivererFilterQuery, setDelivererFilterQuery] = useState('')
+  const [delivererFilterSelected, setDelivererFilterSelected] = useState(null)
   const [reload, setReload] = useState(0)
   const [form, setForm] = useState(emptyForm)
   const [formOpen, setFormOpen] = useState(false)
@@ -26,7 +30,12 @@ export default function Deliveries({ api, csrfToken, onExpired, onNavigate, onDe
   const [actionBusy, setActionBusy] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
   const [addressEdited, setAddressEdited] = useState(false)
-  const [pendingClientId, setPendingClientId] = useState(null)
+  const [clientQuery, setClientQuery] = useState('')
+  const [selectedClient, setSelectedClient] = useState(null)
+  const [previousClient, setPreviousClient] = useState(null)
+  const [pendingClient, setPendingClient] = useState(null)
+  const [delivererQuery, setDelivererQuery] = useState('')
+  const [selectedDeliverer, setSelectedDeliverer] = useState(null)
 
   const queryString = new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== '')).toString()
   useEffect(() => {
@@ -37,33 +46,73 @@ export default function Deliveries({ api, csrfToken, onExpired, onNavigate, onDe
   }, [api, onExpired, queryString, reload])
   function changeFilter(field, value) { setItems(null); setFilters((current) => ({ ...current, [field]: value })) }
   function reloadList() { setItems(null); setReload((value) => value + 1) }
-  useEffect(() => {
-    let active = true
-    Promise.all([api('/clients'), api('/deliverers')]).then(([clientRows, delivererRows]) => {
-      if (active) { setClients(clientRows); setDeliverers(delivererRows) }
-    }).catch((requestError) => {
-      if (active) { setError(requestError.message); if (/autenticação|sessão inválida/i.test(requestError.message)) onExpired() }
-    }).finally(() => active && setOptionsLoading(false))
-    return () => { active = false }
-  }, [api, onExpired])
-
-  function startNew() { setForm({ ...emptyForm }); setSelected(null); setFormOpen(true); setError(''); setAddressEdited(false); setPendingClientId(null) }
-  function openEdit(item) {
-    setSelected(item); setForm({ cliente_id: item.cliente_id, entregador_id: item.entregador_id, descricao: item.descricao, cep_destino: item.cep_destino || '', endereco_destino: item.endereco_destino || '', quadra_destino: item.quadra_destino || '', lote_destino: item.lote_destino || '', numero_destino: item.numero_destino || '', setor_destino: item.setor_destino || '', cidade_destino: item.cidade_destino || '', estado_destino: item.estado_destino || '', observacoes: item.observacoes || '' }); setFormOpen(true); setError(''); setAddressEdited(false); setPendingClientId(null)
+  function startNew() {
+    setForm({ ...emptyForm }); setSelected(null); setFormOpen(true); setError(''); setAddressEdited(false)
+    setClientQuery(''); setSelectedClient(null); setPreviousClient(null); setPendingClient(null)
+    setDelivererQuery(''); setSelectedDeliverer(null)
   }
-  function selectClient(id) {
-    const client = clients.find((item) => String(item.id) === String(id))
-    if (!client) { setForm((current) => ({ ...current, cliente_id: '' })); return }
-    if (requiresClientAddressConfirmation(form, id, addressEdited)) { setPendingClientId(String(id)); return }
-    setForm((current) => populateDeliveryAddress(current, client)); setAddressEdited(false); setPendingClientId(null)
+  function openEdit(item) {
+    setSelected(item); setForm({ cliente_id: item.cliente_id, entregador_id: item.entregador_id, descricao: item.descricao, cep_destino: item.cep_destino || '', endereco_destino: item.endereco_destino || '', quadra_destino: item.quadra_destino || '', lote_destino: item.lote_destino || '', numero_destino: item.numero_destino || '', setor_destino: item.setor_destino || '', cidade_destino: item.cidade_destino || '', estado_destino: item.estado_destino || '', observacoes: item.observacoes || '' }); setFormOpen(true); setError(''); setAddressEdited(false); setPendingClient(null)
+    setClientQuery(item.cliente_nome || ''); setSelectedClient({ id: item.cliente_id, nome: item.cliente_nome, cpf: item.cliente_cpf }); setPreviousClient(null)
+    setDelivererQuery(item.entregador_nome || ''); setSelectedDeliverer({ id: item.entregador_id, nome: item.entregador_nome, cpf: item.entregador_cpf })
+  }
+  function changeClientQuery(value) {
+    setClientQuery(value)
+    setPendingClient(null)
+    if (selectedClient) setPreviousClient(selectedClient)
+    setSelectedClient(null)
+    setForm((current) => ({ ...current, cliente_id: '' }))
+  }
+  function applyClient(client) {
+    setForm((current) => populateDeliveryAddress(current, client))
+    setSelectedClient(client); setPreviousClient(null); setClientQuery(client.nome); setPendingClient(null); setAddressEdited(false)
+  }
+  function selectClient(client) {
+    const prior = previousClient || selectedClient
+    if (addressEdited && prior && String(prior.id) === String(client.id)) {
+      setForm((current) => ({ ...current, cliente_id: String(client.id) }))
+      setSelectedClient(prior); setPreviousClient(null); setClientQuery(prior.nome); return
+    }
+    if (addressEdited && (!prior || requiresClientAddressConfirmation({ cliente_id: prior.id }, client.id, true))) {
+      setPendingClient(client); setClientQuery(client.nome); setSelectedClient(null)
+      setForm((current) => ({ ...current, cliente_id: '' })); return
+    }
+    applyClient(client)
+  }
+  function cancelClientChange() {
+    if (previousClient) {
+      setSelectedClient(previousClient); setClientQuery(previousClient.nome)
+      setForm((current) => ({ ...current, cliente_id: String(previousClient.id) }))
+    } else {
+      setClientQuery(''); setSelectedClient(null); setForm((current) => ({ ...current, cliente_id: '' }))
+    }
+    setPreviousClient(null); setPendingClient(null)
+  }
+  function confirmClientChange() {
+    if (pendingClient) applyClient(pendingClient)
+  }
+  function changeDelivererQuery(value) {
+    setDelivererQuery(value); setSelectedDeliverer(null)
+    setForm((current) => ({ ...current, entregador_id: '' }))
+  }
+  function selectDeliverer(deliverer) {
+    setSelectedDeliverer(deliverer); setDelivererQuery(deliverer.nome)
+    setForm((current) => ({ ...current, entregador_id: String(deliverer.id) }))
+  }
+  function changeClientFilterQuery(value) {
+    setClientFilterQuery(value); setClientFilterSelected(null); changeFilter('cliente_id', '')
+  }
+  function selectClientFilter(client) {
+    setClientFilterSelected(client); setClientFilterQuery(client.nome); changeFilter('cliente_id', String(client.id))
+  }
+  function changeDelivererFilterQuery(value) {
+    setDelivererFilterQuery(value); setDelivererFilterSelected(null); changeFilter('entregador_id', '')
+  }
+  function selectDelivererFilter(deliverer) {
+    setDelivererFilterSelected(deliverer); setDelivererFilterQuery(deliverer.nome); changeFilter('entregador_id', String(deliverer.id))
   }
   function changeDestination(field, value) {
     setForm((current) => ({ ...current, [field]: value })); setAddressEdited(true)
-  }
-  function confirmClientChange() {
-    const client = clients.find((item) => String(item.id) === pendingClientId)
-    if (client) setForm((current) => populateDeliveryAddress(current, client))
-    setAddressEdited(false); setPendingClientId(null)
   }
   async function save(event) {
     event.preventDefault(); setError('')
@@ -105,28 +154,24 @@ export default function Deliveries({ api, csrfToken, onExpired, onNavigate, onDe
     finally { setActionBusy(false) }
   }
 
-  const noClients = !optionsLoading && clients.length === 0
-  const noDeliverers = !optionsLoading && deliverers.length === 0
-  const selectedClient = clients.find((item) => String(item.id) === String(form.cliente_id))
   const missingClientFields = missingClientAddressFields(selectedClient)
   const terminal = detail && ['concluida', 'cancelada'].includes(detail.entrega.status)
   return <section className="users-page deliverers-page" aria-labelledby="deliveries-title">
     <header className="account-heading users-heading"><div><span className="section-label"><i /> OPERAÇÃO</span><h1 id="deliveries-title">Gerenciamento de entregas</h1><p>Cadastre os pedidos, acompanhe o andamento e consulte o histórico de status.</p></div><span className="users-heading-icon" aria-hidden="true">↗</span></header>
     {error && !formOpen && !detail && <p className="error-message" role="alert">{error}</p>}{notice && <p className="success-message" role="status">{notice}</p>}
-    {(noClients || noDeliverers) && <div className="delivery-prerequisites" role="status"><strong>Antes de cadastrar:</strong>{noClients && <span>Nenhum cliente cadastrado. <button type="button" className="text-link-button" onClick={() => onNavigate('clients')}>Abrir Clientes</button></span>}{noDeliverers && <span>Nenhum entregador cadastrado. <button type="button" className="text-link-button" onClick={() => onNavigate('deliverers')}>Abrir Entregadores</button></span>}</div>}
-    <div className="deliverer-toolbar"><label className="users-search">Pesquisar descrição, cliente ou entregador<input type="search" placeholder="Ex.: pedido ou nome" value={filters.q} onChange={(event) => changeFilter('q', event.target.value)} /></label><button className="submit-button account-submit" type="button" onClick={startNew} disabled={optionsLoading || noClients || noDeliverers}>＋ Nova entrega</button></div>
-    <div className="delivery-filters"><label>Status<select value={filters.status} onChange={(event) => changeFilter('status', event.target.value)}><option value="">Todos</option>{Object.entries(STATUS_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>Cliente<select value={filters.cliente_id} onChange={(event) => changeFilter('cliente_id', event.target.value)}><option value="">Todos</option>{clients.map((item) => <option value={item.id} key={item.id}>{item.nome} · #{item.id}{item.cpf ? ` · ${item.cpf}` : ''}</option>)}</select></label><label>Entregador<select value={filters.entregador_id} onChange={(event) => changeFilter('entregador_id', event.target.value)}><option value="">Todos</option>{deliverers.map((item) => <option value={item.id} key={item.id}>{item.nome} · #{item.id}{item.cpf ? ` · ${item.cpf}` : ''}</option>)}</select></label><label>De<input type="date" value={filters.de} onChange={(event) => changeFilter('de', event.target.value)} /></label><label>Até<input type="date" value={filters.ate} onChange={(event) => changeFilter('ate', event.target.value)} /></label></div>
+    <div className="deliverer-toolbar"><label className="users-search">Pesquisar descrição, cliente ou entregador<input type="search" placeholder="Ex.: pedido ou nome" value={filters.q} onChange={(event) => changeFilter('q', event.target.value)} /></label><button className="submit-button account-submit" type="button" onClick={startNew}>＋ Nova entrega</button></div>
+    <div className="delivery-filters"><label>Status<select value={filters.status} onChange={(event) => changeFilter('status', event.target.value)}><option value="">Todos</option>{Object.entries(STATUS_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><RecordSearch api={api} endpoint="/clients" label="Cliente" query={clientFilterQuery} selected={clientFilterSelected} onQueryChange={changeClientFilterQuery} onSelect={selectClientFilter} details={clientDetails} onExpired={onExpired} /><RecordSearch api={api} endpoint="/deliverers" label="Entregador" query={delivererFilterQuery} selected={delivererFilterSelected} onQueryChange={changeDelivererFilterQuery} onSelect={selectDelivererFilter} details={delivererDetails} onExpired={onExpired} /><label>De<input type="date" value={filters.de} onChange={(event) => changeFilter('de', event.target.value)} /></label><label>Até<input type="date" value={filters.ate} onChange={(event) => changeFilter('ate', event.target.value)} /></label></div>
     {items === null ? <div className="account-loading"><span className="spinner" /> Carregando entregas...</div> : items.length === 0 ? <div className="users-empty"><span aria-hidden="true">⌕</span><h2>{Object.values(filters).some(Boolean) ? 'Nenhuma entrega encontrada' : 'Nenhuma entrega cadastrada'}</h2><p>{Object.values(filters).some(Boolean) ? 'Ajuste os filtros e tente novamente.' : 'Cadastre a primeira entrega para acompanhar a operação.'}</p></div> : <div className="users-table-wrap"><table className="users-table deliveries-table"><thead><tr><th>ID</th><th>Cliente</th><th>Entregador</th><th>Descrição</th><th>Destino</th><th>Criada em</th><th>Status</th><th>Ações</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td data-label="ID">#{item.id}</td><td data-label="Cliente">{item.cliente_nome} <small>#{item.cliente_id}{item.cliente_cpf ? ` · ${item.cliente_cpf}` : ''}</small></td><td data-label="Entregador">{item.entregador_nome} <small>#{item.entregador_id}{item.entregador_cpf ? ` · ${item.entregador_cpf}` : ''}</small></td><td data-label="Descrição">{item.descricao}</td><td data-label="Destino">{addressSummary(item)}</td><td data-label="Criada em">{displayDate(item.criado_em)}</td><td data-label="Status"><span className={`delivery-status status-${item.status}`}>{STATUS_LABELS[item.status]}</span></td><td data-label="Ações"><div className="deliverer-row-actions"><button className="edit-user-button" type="button" onClick={() => openDetail(item.id)}>Detalhes</button>{!['concluida', 'cancelada'].includes(item.status) && <button className="edit-user-button" type="button" onClick={() => openEdit(item)}>Editar</button>}</div></td></tr>)}</tbody></table></div>}
 
     {formOpen && <div className="user-modal-backdrop" role="presentation"><section className="user-modal deliverer-modal delivery-modal" role="dialog" aria-modal="true" aria-labelledby="delivery-form-title"><header className="account-heading"><div><span className="section-label">DADOS DA ENTREGA</span><h2 id="delivery-form-title">{selected ? `Editar entrega #${selected.id}` : 'Nova entrega'}</h2><p>O status inicial é definido automaticamente como Na farmácia.</p></div><button className="modal-close" type="button" aria-label="Fechar" onClick={() => setFormOpen(false)}>×</button></header>
       {error && <p className="error-message" role="alert">{error}</p>}
-      {noClients || noDeliverers ? <div className="delivery-prerequisites"><strong>Vínculos necessários</strong>{noClients && <p>Cadastre primeiro um cliente. <button type="button" className="text-link-button" onClick={() => onNavigate('clients')}>Abrir Clientes</button></p>}{noDeliverers && <p>Cadastre primeiro um entregador. <button type="button" className="text-link-button" onClick={() => onNavigate('deliverers')}>Abrir Entregadores</button></p>}</div> : <form onSubmit={save} noValidate><div className="deliverer-fields">
-        <label className="account-field">Cliente *<select required disabled={!!selected} value={form.cliente_id} onChange={(event) => selectClient(event.target.value)}><option value="">Selecione um cliente</option>{clients.map((item) => <option value={item.id} key={item.id}>{item.nome} · #{item.id}{item.cpf ? ` · CPF ${item.cpf}` : ''}{item.endereco ? ` · ${item.endereco}` : ''}</option>)}</select></label>
-        <label className="account-field">Entregador *<select required value={form.entregador_id} onChange={(event) => setForm({ ...form, entregador_id: event.target.value })}><option value="">Selecione um entregador</option>{deliverers.map((item) => <option value={item.id} key={item.id}>{item.nome} · #{item.id}{item.cpf ? ` · CPF ${item.cpf}` : ''}{item.email ? ` · ${item.email}` : ''}</option>)}</select></label>
+      <form onSubmit={save} noValidate><div className="deliverer-fields">
+        <RecordSearch api={api} endpoint="/clients" label="Cliente" query={clientQuery} selected={selectedClient} onQueryChange={changeClientQuery} onSelect={selectClient} details={clientDetails} disabled={!!selected} required onExpired={onExpired} />
+        <RecordSearch api={api} endpoint="/deliverers" label="Entregador" query={delivererQuery} selected={selectedDeliverer} onQueryChange={changeDelivererQuery} onSelect={selectDeliverer} details={delivererDetails} disabled={!!selected} required onExpired={onExpired} />
         <label className="account-field delivery-full-row">Descrição da entrega *<input required maxLength={500} value={form.descricao} onChange={(event) => setForm({ ...form, descricao: event.target.value })} placeholder="Ex.: medicamentos do pedido" /></label>
         <p className="delivery-address-intro">Destino copiado do cadastro do cliente. Você pode ajustar este snapshot sem alterar o endereço cadastrado.</p>
         {missingClientFields.length > 0 && <p className="delivery-address-intro" role="status">Dados ausentes no cadastro do cliente: {missingClientFields.join(', ')}. Os campos de destino continuam editáveis.</p>}
-        {pendingClientId && <div className="delivery-prerequisites delivery-client-switch" role="alert"><strong>Substituir o endereço editado?</strong><p>Ao trocar de cliente, o destino será carregado do cadastro do novo cliente. As alterações manuais atuais serão substituídas.</p><button type="button" className="secondary-button" onClick={() => setPendingClientId(null)}>Manter endereço atual</button> <button type="button" className="submit-button account-submit" onClick={confirmClientChange}>Trocar cliente e carregar endereço</button></div>}
+        {pendingClient && <div className="delivery-prerequisites delivery-client-switch" role="alert"><strong>Substituir o endereço editado?</strong><p>Ao trocar de cliente, o destino será carregado do cadastro do novo cliente. As alterações manuais atuais serão substituídas.</p><button type="button" className="secondary-button" onClick={cancelClientChange}>Manter endereço atual</button> <button type="button" className="submit-button account-submit" onClick={confirmClientChange}>Trocar cliente e carregar endereço</button></div>}
         <label className="account-field">CEP destino<input inputMode="numeric" value={cepMask(form.cep_destino)} onChange={(event) => changeDestination('cep_destino', cepMask(event.target.value))} /></label>
         <label className="account-field">Rua / Logradouro<input maxLength={255} value={form.endereco_destino} onChange={(event) => changeDestination('endereco_destino', event.target.value)} /></label>
         <label className="account-field">Quadra<input maxLength={50} value={form.quadra_destino} onChange={(event) => changeDestination('quadra_destino', event.target.value)} /></label>
@@ -136,7 +181,7 @@ export default function Deliveries({ api, csrfToken, onExpired, onNavigate, onDe
         <label className="account-field">Cidade<input maxLength={100} value={form.cidade_destino} onChange={(event) => changeDestination('cidade_destino', event.target.value)} /></label>
         <label className="account-field">Estado / UF<input maxLength={2} value={form.estado_destino} onChange={(event) => changeDestination('estado_destino', event.target.value.toLocaleUpperCase('pt-BR').slice(0, 2))} /></label>
         <label className="account-field delivery-full-row">Observações<textarea rows="3" maxLength={5000} value={form.observacoes} onChange={(event) => setForm({ ...form, observacoes: event.target.value })} /></label>
-      </div><div className="account-actions"><button className="secondary-button" type="button" disabled={saving} onClick={() => setFormOpen(false)}>Cancelar</button><button className="submit-button account-submit" type="submit" disabled={saving}>{saving ? <><span className="spinner" /> Salvando...</> : selected ? 'Salvar alterações' : 'Cadastrar entrega'}</button></div></form>}
+      </div><div className="account-actions"><button className="secondary-button" type="button" disabled={saving} onClick={() => setFormOpen(false)}>Cancelar</button><button className="submit-button account-submit" type="submit" disabled={saving}>{saving ? <><span className="spinner" /> Salvando...</> : selected ? 'Salvar alterações' : 'Cadastrar entrega'}</button></div></form>
     </section></div>}
 
     {(detail || detailLoading) && <div className="user-modal-backdrop" role="presentation"><section className="user-modal delivery-modal" role="dialog" aria-modal="true" aria-labelledby="delivery-detail-title"><header className="account-heading"><div><span className="section-label">ACOMPANHAMENTO</span><h2 id="delivery-detail-title">{detail ? `Entrega #${detail.entrega.id}` : 'Carregando entrega...'}</h2></div><button className="modal-close" type="button" aria-label="Fechar" onClick={() => { setDetail(null); setError('') }}>×</button></header>
