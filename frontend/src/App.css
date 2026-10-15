@@ -85,8 +85,8 @@ button:disabled { cursor: wait; opacity: .7; }.spinner { width: 17px; height: 17
 .delivery-detail-grid>div>strong { color: var(--ink); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .delivery-preserve-whitespace { white-space: pre-wrap; }
 .delivery-detail-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: stretch; gap: 10px; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
-.delivery-detail-actions > button { width: 100%; min-width: 0; min-height: 46px; margin: 0; padding: 0 12px; border-radius: 8px; white-space: nowrap; }
-.delivery-detail-actions .secondary-button, .delivery-edit-actions .secondary-button { border-color: #cde3d3; color: var(--green-800); background: #e8f4eb; }
+.delivery-detail-actions > button { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-width: 0; min-height: 46px; margin: 0; padding: 0 12px; border-radius: 8px; font-size: 13px; font-weight: 700; line-height: 1.2; box-shadow: none; white-space: nowrap; }
+.delivery-detail-actions .secondary-button, .delivery-edit-actions .secondary-button { border-color: #cde3d3; color: var(--green-800); background: var(--green-100); }
 .delivery-detail-actions .secondary-button:hover:not(:disabled), .delivery-edit-actions .secondary-button:hover:not(:disabled) { border-color: #a8cbb4; color: var(--green-800); background: #dff0e4; }
 .delivery-detail-actions .account-field { min-width: 0; }
 .delivery-detail-actions textarea { min-height: 62px; }
@@ -95,7 +95,6 @@ button:disabled { cursor: wait; opacity: .7; }.spinner { width: 17px; height: 17
 .delivery-history li { display: grid; gap: 4px; padding: 11px 13px; border-left: 3px solid #b5d2bd; border-radius: 0 7px 7px 0; background: #f7faf8; }
 .delivery-history li strong { color: var(--green-900); font-size: 12px; }
 .delivery-history li span, .delivery-history li small { color: #708077; font-size: 11px; }
-.delivery-detail-actions .danger-button { min-height: 46px; white-space: nowrap; }
 .delivery-edit-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 0 0 18px; padding: 12px 14px; border: 1px solid #e6eee8; border-radius: 9px; background: #f8fbf9; color: #52665a; font-size: 12px; }
 .delivery-edit-actions > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .delivery-edit-actions .account-submit, .delivery-edit-actions .danger-button { min-height: 40px; }
