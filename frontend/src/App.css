@@ -109,6 +109,8 @@ button:disabled { cursor: wait; opacity: .7; }.spinner { width: 17px; height: 17
 .delivery-cancel-dialog { width: min(100%, 520px); }
 .delivery-cancel-dialog .account-heading { margin-bottom: 15px; }
 .delivery-cancel-dialog .account-actions { margin-top: 18px; }
+.delivery-cancel-dialog .keep-in-transit-button { border-color: #d8a918; color: #26351f; background: #f4c542; }
+.delivery-cancel-dialog .keep-in-transit-button:hover:not(:disabled) { border-color: #c79513; color: #26351f; background: #eab72e; }
 .deliveries-table tbody tr[tabindex="0"] { cursor: pointer; }
 .deliveries-table tbody tr[tabindex="0"]:hover td { background: #f1f7f2; }
 .deliveries-table tbody tr[tabindex="0"]:focus-visible { outline: 3px solid #70b88d; outline-offset: -3px; }
