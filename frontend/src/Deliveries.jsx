@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { populateDeliveryAddress, requiresClientAddressConfirmation } from './deliveryAddress.js'
+import { missingClientAddressFields, populateDeliveryAddress, requiresClientAddressConfirmation } from './deliveryAddress.js'
 
 const STATUS_LABELS = { na_farmacia: 'Na farmácia', em_transito: 'Em trânsito', concluida: 'Concluída', cancelada: 'Cancelada' }
 const emptyForm = { cliente_id: '', entregador_id: '', descricao: '', cep_destino: '', endereco_destino: '', quadra_destino: '', lote_destino: '', numero_destino: '', setor_destino: '', cidade_destino: '', estado_destino: '', observacoes: '' }
@@ -107,6 +107,8 @@ export default function Deliveries({ api, csrfToken, onExpired, onNavigate, onDe
 
   const noClients = !optionsLoading && clients.length === 0
   const noDeliverers = !optionsLoading && deliverers.length === 0
+  const selectedClient = clients.find((item) => String(item.id) === String(form.cliente_id))
+  const missingClientFields = missingClientAddressFields(selectedClient)
   const terminal = detail && ['concluida', 'cancelada'].includes(detail.entrega.status)
   return <section className="users-page deliverers-page" aria-labelledby="deliveries-title">
     <header className="account-heading users-heading"><div><span className="section-label"><i /> OPERAÇÃO</span><h1 id="deliveries-title">Gerenciamento de entregas</h1><p>Cadastre os pedidos, acompanhe o andamento e consulte o histórico de status.</p></div><span className="users-heading-icon" aria-hidden="true">↗</span></header>
@@ -123,6 +125,7 @@ export default function Deliveries({ api, csrfToken, onExpired, onNavigate, onDe
         <label className="account-field">Entregador *<select required value={form.entregador_id} onChange={(event) => setForm({ ...form, entregador_id: event.target.value })}><option value="">Selecione um entregador</option>{deliverers.map((item) => <option value={item.id} key={item.id}>{item.nome} · #{item.id}{item.cpf ? ` · CPF ${item.cpf}` : ''}{item.email ? ` · ${item.email}` : ''}</option>)}</select></label>
         <label className="account-field delivery-full-row">Descrição da entrega *<input required maxLength={500} value={form.descricao} onChange={(event) => setForm({ ...form, descricao: event.target.value })} placeholder="Ex.: medicamentos do pedido" /></label>
         <p className="delivery-address-intro">Destino copiado do cadastro do cliente. Você pode ajustar este snapshot sem alterar o endereço cadastrado.</p>
+        {missingClientFields.length > 0 && <p className="delivery-address-intro" role="status">Dados ausentes no cadastro do cliente: {missingClientFields.join(', ')}. Os campos de destino continuam editáveis.</p>}
         {pendingClientId && <div className="delivery-prerequisites delivery-client-switch" role="alert"><strong>Substituir o endereço editado?</strong><p>Ao trocar de cliente, o destino será carregado do cadastro do novo cliente. As alterações manuais atuais serão substituídas.</p><button type="button" className="secondary-button" onClick={() => setPendingClientId(null)}>Manter endereço atual</button> <button type="button" className="submit-button account-submit" onClick={confirmClientChange}>Trocar cliente e carregar endereço</button></div>}
         <label className="account-field">CEP destino<input inputMode="numeric" value={cepMask(form.cep_destino)} onChange={(event) => changeDestination('cep_destino', cepMask(event.target.value))} /></label>
         <label className="account-field">Rua / Logradouro<input maxLength={255} value={form.endereco_destino} onChange={(event) => changeDestination('endereco_destino', event.target.value)} /></label>

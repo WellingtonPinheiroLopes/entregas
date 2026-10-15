@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { populateDeliveryAddress, requiresClientAddressConfirmation } from './deliveryAddress.js'
+import { missingClientAddressFields, populateDeliveryAddress, requiresClientAddressConfirmation } from './deliveryAddress.js'
 
 test('selecionar cliente carrega os campos canônicos disponíveis no snapshot', () => {
   const form = { cliente_id: '', descricao: 'Pedido', numero_destino: 'preexistente' }
@@ -21,6 +21,13 @@ test('respostas parciais e nomes alternativos do endereço permanecem editáveis
   assert.equal(populated.cidade_destino, '')
   assert.equal(populated.estado_destino, 'SP')
   assert.equal(populated.numero_destino, '')
+  assert.deepEqual(missingClientAddressFields(client), ['Cidade'])
+})
+
+test('identifica campos regionais ausentes no cadastro sem inferir valores', () => {
+  assert.deepEqual(missingClientAddressFields({ setor: null, cidade: null, estado: null }), ['Bairro / Setor', 'Cidade', 'Estado / UF'])
+  assert.deepEqual(missingClientAddressFields({ bairro: 'Centro', cidade: 'Campinas', uf: 'SP' }), [])
+  assert.deepEqual(missingClientAddressFields(null), [])
 })
 
 test('trocar cliente pede confirmação após edição manual e não a pede para seleção inicial', () => {

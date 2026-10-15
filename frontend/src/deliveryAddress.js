@@ -16,3 +16,13 @@ export function populateDeliveryAddress(form, client) {
 export function requiresClientAddressConfirmation(form, clientId, addressEdited) {
   return Boolean(addressEdited && form.cliente_id && String(form.cliente_id) !== String(clientId))
 }
+
+export function missingClientAddressFields(client) {
+  if (!client) return []
+  return [
+    ['setor', 'bairro', 'Bairro / Setor'],
+    ['cidade', null, 'Cidade'],
+    ['estado', 'uf', 'Estado / UF'],
+  ].filter(([field, alias]) => !(client[field] || (alias && client[alias])))
+    .map(([, , label]) => label)
+}
