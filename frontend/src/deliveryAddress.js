@@ -3,13 +3,13 @@ export function populateDeliveryAddress(form, client) {
     ...form,
     cliente_id: String(client.id),
     cep_destino: client.cep || '',
-    endereco_destino: client.endereco || '',
+    endereco_destino: client.endereco || client.logradouro || '',
     quadra_destino: client.quadra || '',
     lote_destino: client.lote || '',
-    numero_destino: '',
-    setor_destino: client.setor || '',
+    numero_destino: client.numero || '',
+    setor_destino: client.setor || client.bairro || '',
     cidade_destino: client.cidade || '',
-    estado_destino: client.estado || '',
+    estado_destino: client.estado || client.uf || '',
   }
 }
 
