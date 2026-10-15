@@ -9,7 +9,7 @@ const users = [
   { id: 1, nome: 'Admin', email: 'admin@example.com', acesso: 'administrador', criado_em: '2026-01-01', atualizado_em: '2026-01-01', senha_hash: '' },
   { id: 2, nome: 'Convidado', email: 'guest@example.com', acesso: 'convidado', criado_em: '2026-01-01', atualizado_em: '2026-01-01', senha_hash: '' },
 ];
-const clients = [{ id: 101, nome: 'Cliente Teste', cpf: '52998224725', cep: '01001000', endereco: 'Rua Original', quadra: 'Q1', lote: 'L2', setor: 'Centro', cidade: 'São Paulo', estado: 'SP' }];
+const clients = [{ id: 101, nome: 'Cliente Teste', cpf: '52998224725', cep: '01001000', endereco: 'Rua Original', numero: '55', quadra: 'Q1', lote: 'L2', setor: 'Centro', cidade: 'São Paulo', estado: 'SP' }];
 const deliverers = [{ id: 201, nome: 'Entregador Teste', cpf: '11122233344', email: 'driver@example.com' }];
 let deliveries = [];
 let history = [];
@@ -102,7 +102,7 @@ before(async () => {
   const app = createApp({ db: mockDb, sessionStore: new session.MemoryStore(), testing: true });
   server = app.listen(0, '127.0.0.1'); await new Promise((resolve) => server.once('listening', resolve)); baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
-beforeEach(() => { deliveries = []; history = []; nextDeliveryId = 1; nextHistoryId = 1; failDeliveryQuery = false; Object.assign(clients[0], { cep: '01001000', endereco: 'Rua Original', quadra: 'Q1', lote: 'L2', setor: 'Centro', cidade: 'São Paulo', estado: 'SP' }); cookie = ''; });
+beforeEach(() => { deliveries = []; history = []; nextDeliveryId = 1; nextHistoryId = 1; failDeliveryQuery = false; Object.assign(clients[0], { cep: '01001000', endereco: 'Rua Original', numero: '55', quadra: 'Q1', lote: 'L2', setor: 'Centro', cidade: 'São Paulo', estado: 'SP' }); cookie = ''; });
 after(async () => new Promise((resolve) => server.close(resolve)));
 
 test('API de entregas exige autenticação, autorização administrativa e CSRF', async () => {
@@ -125,14 +125,17 @@ test('cria com vínculos válidos, valida obrigatórios e força status inicial 
   assert.equal(created.body.entrega.status, 'na_farmacia');
   assert.equal(created.body.entrega.endereco_destino, 'Rua ajustada');
   assert.equal(created.body.entrega.cep_destino, '01001000');
+  assert.equal(created.body.entrega.numero_destino, '55');
   assert.equal(created.body.entrega.quadra_destino, 'Q8');
   assert.equal(created.body.entrega.lote_destino, 'L2');
   assert.equal(created.body.entrega.setor_destino, 'Centro'); assert.equal(created.body.entrega.cidade_destino, 'São Paulo'); assert.equal(created.body.entrega.estado_destino, 'SP');
   assert.equal(history.length, 1); assert.equal(history[0].status_novo, 'na_farmacia'); assert.equal(history[0].usuario_id, 1);
   clients[0].endereco = 'Rua nova do cadastro';
+  clients[0].numero = '99';
   clients[0].setor = 'Bairro novo'; clients[0].cidade = 'Cidade nova'; clients[0].estado = 'RJ';
   const historical = (await request('/api/deliveries/1')).body.entrega;
   assert.equal(historical.endereco_destino, 'Rua ajustada'); assert.equal(historical.setor_destino, 'Centro');
+  assert.equal(historical.numero_destino, '55');
   assert.equal(historical.cidade_destino, 'São Paulo'); assert.equal(historical.estado_destino, 'SP');
 });
 

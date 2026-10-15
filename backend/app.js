@@ -416,8 +416,8 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
     }
   });
 
-  const CLIENT_FIELDS = ['nome', 'cpf', 'cep', 'endereco', 'quadra', 'lote', 'setor', 'cidade', 'estado', 'observacao'];
-  const CLIENT_SELECT = 'id, nome, cpf, cep, endereco, quadra, lote, setor, cidade, estado, observacao, criado_em, atualizado_em';
+  const CLIENT_FIELDS = ['nome', 'cpf', 'cep', 'endereco', 'numero', 'quadra', 'lote', 'setor', 'cidade', 'estado', 'observacao'];
+  const CLIENT_SELECT = 'id, nome, cpf, cep, endereco, numero, quadra, lote, setor, cidade, estado, observacao, criado_em, atualizado_em';
   function parseClient(body, partial = false) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return { error: 'Envie dados válidos do cliente.' };
     if (Object.keys(body).some((key) => !CLIENT_FIELDS.includes(key))) return { error: 'Envie somente os campos do cadastro de cliente.' };
@@ -455,7 +455,7 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
           value.estado = state;
         }
       } else {
-        const limits = { endereco: 255, quadra: 50, lote: 50, setor: 120, cidade: 100, observacao: 5000 };
+        const limits = { endereco: 255, numero: 30, quadra: 50, lote: 50, setor: 120, cidade: 100, observacao: 5000 };
         if (input.length > limits[field]) return { error: `O campo ${field} excede o limite permitido.` };
         value[field] = input || null;
       }
