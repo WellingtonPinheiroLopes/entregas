@@ -86,10 +86,10 @@ button:disabled { cursor: wait; opacity: .7; }.spinner { width: 17px; height: 17
 .delivery-preserve-whitespace { white-space: pre-wrap; }
 .delivery-detail-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: stretch; gap: 10px; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
 .delivery-detail-actions > button { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-width: 0; min-height: 46px; margin: 0; padding: 0 12px; border-radius: 8px; font-size: 13px; font-weight: 700; line-height: 1.2; box-shadow: none; white-space: nowrap; }
-.delivery-detail-actions .delivery-action-edit, .delivery-edit-actions .delivery-action-edit { border-color: #cde3d3; color: var(--green-800); background: var(--green-100); }
-.delivery-detail-actions .delivery-action-edit:hover:not(:disabled), .delivery-edit-actions .delivery-action-edit:hover:not(:disabled) { border-color: #a8cbb4; color: var(--green-800); background: #dff0e4; }
-.delivery-detail-actions .delivery-action-pharmacy, .delivery-edit-actions .delivery-action-pharmacy { border-color: #bfd3ee; color: #174a7a; background: #e8f1fc; }
-.delivery-detail-actions .delivery-action-pharmacy:hover:not(:disabled), .delivery-edit-actions .delivery-action-pharmacy:hover:not(:disabled) { border-color: #9bbbe5; color: #123b64; background: #d9e9fb; }
+.delivery-detail-actions .delivery-action-edit, .delivery-edit-actions .delivery-action-edit { border-color: #C8E5D1; color: #17643D; background: #E8F5EC; }
+.delivery-detail-actions .delivery-action-edit:hover:not(:disabled), .delivery-edit-actions .delivery-action-edit:hover:not(:disabled) { color: #17643D; background: #D8EEDD; }
+.delivery-detail-actions .delivery-action-pharmacy, .delivery-edit-actions .delivery-action-pharmacy { border-color: #C9DDF7; color: #245A91; background: #E8F2FF; }
+.delivery-detail-actions .delivery-action-pharmacy:hover:not(:disabled), .delivery-edit-actions .delivery-action-pharmacy:hover:not(:disabled) { color: #245A91; background: #D8E8FC; }
 .delivery-detail-actions .delivery-action-complete, .delivery-edit-actions .delivery-action-complete { border: 1px solid var(--green-800); color: #fff; background: var(--green-800); }
 .delivery-detail-actions .delivery-action-complete:hover:not(:disabled), .delivery-edit-actions .delivery-action-complete:hover:not(:disabled) { border-color: var(--green-900); color: #fff; background: var(--green-900); }
 .delivery-detail-actions .delivery-action-cancel, .delivery-edit-actions .delivery-action-cancel { border-color: #a43c3c; color: #fff; background: #a43c3c; }
