@@ -12,9 +12,9 @@ const addressSummary = (item) => [item.endereco_destino, item.numero_destino, it
 const clientDetails = (item) => [item.endereco && `${item.endereco}${item.numero ? `, ${item.numero}` : ''}`, item.cpf && `CPF ${item.cpf}`].filter(Boolean).join(' · ')
 const delivererDetails = (item) => [item.cpf && `CPF ${item.cpf}`, item.email].filter(Boolean).join(' · ')
 
-export default function Deliveries({ api, csrfToken, onExpired, onDeliveryChange }) {
+export default function Deliveries({ api, csrfToken, onExpired, onDeliveryChange, initialStatus = '' }) {
   const [items, setItems] = useState(null)
-  const [filters, setFilters] = useState({ q: '', status: '', cliente_id: '', entregador_id: '', de: '', ate: '' })
+  const [filters, setFilters] = useState({ q: '', status: initialStatus, cliente_id: '', entregador_id: '', de: '', ate: '' })
   const [clientFilterQuery, setClientFilterQuery] = useState('')
   const [clientFilterSelected, setClientFilterSelected] = useState(null)
   const [delivererFilterQuery, setDelivererFilterQuery] = useState('')
