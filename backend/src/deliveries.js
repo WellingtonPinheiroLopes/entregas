@@ -114,7 +114,7 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
     let connection;
     try {
       connection = await db.getConnection(); await connection.beginTransaction();
-      const [clientRows] = await connection.execute('SELECT id, cep, endereco, quadra, lote FROM clientes WHERE id = ? LIMIT 1 FOR UPDATE', [body.cliente_id]);
+      const [clientRows] = await connection.execute('SELECT id, cep, endereco, quadra, lote, setor, cidade, estado FROM clientes WHERE id = ? LIMIT 1 FOR UPDATE', [body.cliente_id]);
       if (!clientRows[0]) { await connection.rollback(); return res.status(404).json({ erro: 'Cliente selecionado não encontrado.' }); }
       const [delivererRows] = await connection.execute('SELECT id FROM entregadores WHERE id = ? LIMIT 1 FOR UPDATE', [body.entregador_id]);
       if (!delivererRows[0]) { await connection.rollback(); return res.status(404).json({ erro: 'Entregador selecionado não encontrado.' }); }
@@ -125,9 +125,9 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
         quadra_destino: Object.hasOwn(parsed.value, 'quadra_destino') ? parsed.value.quadra_destino : client.quadra,
         lote_destino: Object.hasOwn(parsed.value, 'lote_destino') ? parsed.value.lote_destino : client.lote,
         numero_destino: parsed.value.numero_destino ?? null,
-        setor_destino: parsed.value.setor_destino ?? null,
-        cidade_destino: parsed.value.cidade_destino ?? null,
-        estado_destino: parsed.value.estado_destino ?? null,
+        setor_destino: Object.hasOwn(parsed.value, 'setor_destino') ? parsed.value.setor_destino : client.setor ?? null,
+        cidade_destino: Object.hasOwn(parsed.value, 'cidade_destino') ? parsed.value.cidade_destino : client.cidade ?? null,
+        estado_destino: Object.hasOwn(parsed.value, 'estado_destino') ? parsed.value.estado_destino : client.estado ?? null,
         observacoes: parsed.value.observacoes ?? null,
       };
       const fields = ['cliente_id', 'entregador_id', 'descricao', 'status', ...DESTINATION_FIELDS, 'observacoes'];

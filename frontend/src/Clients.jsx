@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { lookupCep } from './address.js'
 import { mergeClientViaCep } from './clientAddress.js'
 
-const emptyForm = { nome: '', cpf: '', cep: '', endereco: '', quadra: '', lote: '', observacao: '' }
+const emptyForm = { nome: '', cpf: '', cep: '', endereco: '', quadra: '', lote: '', setor: '', cidade: '', estado: '', observacao: '' }
 const digits = (value) => value.replace(/\D/g, '')
 const cpfMask = (value) => digits(value).slice(0, 11).replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d{1,2})$/, '$1-$2')
 const cepMask = (value) => digits(value).slice(0, 8).replace(/(\d{5})(\d)/, '$1-$2')
@@ -102,6 +102,9 @@ export default function Clients({ api, csrfToken, onExpired }) {
         <label className="account-field">Rua / Logradouro<input autoComplete="address-line1" maxLength={255} value={form.endereco} onChange={(event) => setForm({ ...form, endereco: event.target.value })} /></label>
         <label className="account-field">Quadra<input maxLength={50} value={form.quadra} onChange={(event) => setForm({ ...form, quadra: event.target.value })} /></label>
         <label className="account-field">Lote<input maxLength={50} value={form.lote} onChange={(event) => setForm({ ...form, lote: event.target.value })} /></label>
+        <label className="account-field">Bairro / Setor<input autoComplete="address-level3" maxLength={120} value={form.setor} onChange={(event) => setForm({ ...form, setor: event.target.value })} /></label>
+        <label className="account-field">Cidade<input autoComplete="address-level2" maxLength={100} value={form.cidade} onChange={(event) => setForm({ ...form, cidade: event.target.value })} /></label>
+        <label className="account-field">Estado / UF<input autoComplete="address-level1" maxLength={2} value={form.estado} onChange={(event) => setForm({ ...form, estado: event.target.value.toLocaleUpperCase('pt-BR').slice(0, 2) })} /></label>
         <label className="account-field client-observation">Observação<textarea rows="4" maxLength={5000} placeholder="Complemento, ponto de referência ou instruções para localizar o endereço" value={form.observacao} onChange={(event) => setForm({ ...form, observacao: event.target.value })} /></label>
       </div>{error && <p className="error-message" role="alert">{error}</p>}<div className="account-actions"><button className="secondary-button" type="button" disabled={saving} onClick={closeForm}>Cancelar</button><button className="submit-button account-submit" type="submit" disabled={saving}>{saving ? <><span className="spinner" /> Salvando...</> : selected ? 'Salvar alterações' : 'Cadastrar cliente'}</button></div></form>
     </section></div>}

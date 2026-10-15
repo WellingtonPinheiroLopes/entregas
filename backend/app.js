@@ -416,8 +416,8 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
     }
   });
 
-  const CLIENT_FIELDS = ['nome', 'cpf', 'cep', 'endereco', 'quadra', 'lote', 'observacao'];
-  const CLIENT_SELECT = 'id, nome, cpf, cep, endereco, quadra, lote, observacao, criado_em, atualizado_em';
+  const CLIENT_FIELDS = ['nome', 'cpf', 'cep', 'endereco', 'quadra', 'lote', 'setor', 'cidade', 'estado', 'observacao'];
+  const CLIENT_SELECT = 'id, nome, cpf, cep, endereco, quadra, lote, setor, cidade, estado, observacao, criado_em, atualizado_em';
   function parseClient(body, partial = false) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return { error: 'Envie dados válidos do cliente.' };
     if (Object.keys(body).some((key) => !CLIENT_FIELDS.includes(key))) return { error: 'Envie somente os campos do cadastro de cliente.' };
@@ -447,8 +447,15 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
           if (!/^\d{8}$/.test(cep)) return { error: 'Informe um CEP válido com 8 dígitos.' };
           value.cep = cep;
         }
+      } else if (field === 'estado') {
+        if (!input) value.estado = null;
+        else {
+          const state = input.toLocaleUpperCase('pt-BR');
+          if (state.length !== 2 || !BRAZILIAN_STATES.has(state)) return { error: 'Informe uma UF brasileira válida.' };
+          value.estado = state;
+        }
       } else {
-        const limits = { endereco: 255, quadra: 50, lote: 50, observacao: 5000 };
+        const limits = { endereco: 255, quadra: 50, lote: 50, setor: 120, cidade: 100, observacao: 5000 };
         if (input.length > limits[field]) return { error: `O campo ${field} excede o limite permitido.` };
         value[field] = input || null;
       }

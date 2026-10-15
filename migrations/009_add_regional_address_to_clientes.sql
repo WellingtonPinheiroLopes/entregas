@@ -1,0 +1,4 @@
+ALTER TABLE clientes
+    ADD COLUMN setor VARCHAR(120) NULL AFTER lote,
+    ADD COLUMN cidade VARCHAR(100) NULL AFTER setor,
+    ADD COLUMN estado CHAR(2) NULL AFTER cidade;

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { populateDeliveryAddress, requiresClientAddressConfirmation } from './deliveryAddress.js'
 
 const STATUS_LABELS = { na_farmacia: 'Na farmácia', em_transito: 'Em trânsito', concluida: 'Concluída', cancelada: 'Cancelada' }
 const emptyForm = { cliente_id: '', entregador_id: '', descricao: '', cep_destino: '', endereco_destino: '', quadra_destino: '', lote_destino: '', numero_destino: '', setor_destino: '', cidade_destino: '', estado_destino: '', observacoes: '' }
@@ -24,6 +25,8 @@ export default function Deliveries({ api, csrfToken, onExpired, onNavigate, onDe
   const [cancelReason, setCancelReason] = useState('')
   const [actionBusy, setActionBusy] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [addressEdited, setAddressEdited] = useState(false)
+  const [pendingClientId, setPendingClientId] = useState(null)
 
   const queryString = new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== '')).toString()
   useEffect(() => {
@@ -44,13 +47,23 @@ export default function Deliveries({ api, csrfToken, onExpired, onNavigate, onDe
     return () => { active = false }
   }, [api, onExpired])
 
-  function startNew() { setForm({ ...emptyForm }); setSelected(null); setFormOpen(true); setError('') }
+  function startNew() { setForm({ ...emptyForm }); setSelected(null); setFormOpen(true); setError(''); setAddressEdited(false); setPendingClientId(null) }
   function openEdit(item) {
-    setSelected(item); setForm({ cliente_id: item.cliente_id, entregador_id: item.entregador_id, descricao: item.descricao, cep_destino: item.cep_destino || '', endereco_destino: item.endereco_destino || '', quadra_destino: item.quadra_destino || '', lote_destino: item.lote_destino || '', numero_destino: item.numero_destino || '', setor_destino: item.setor_destino || '', cidade_destino: item.cidade_destino || '', estado_destino: item.estado_destino || '', observacoes: item.observacoes || '' }); setFormOpen(true); setError('')
+    setSelected(item); setForm({ cliente_id: item.cliente_id, entregador_id: item.entregador_id, descricao: item.descricao, cep_destino: item.cep_destino || '', endereco_destino: item.endereco_destino || '', quadra_destino: item.quadra_destino || '', lote_destino: item.lote_destino || '', numero_destino: item.numero_destino || '', setor_destino: item.setor_destino || '', cidade_destino: item.cidade_destino || '', estado_destino: item.estado_destino || '', observacoes: item.observacoes || '' }); setFormOpen(true); setError(''); setAddressEdited(false); setPendingClientId(null)
   }
   function selectClient(id) {
     const client = clients.find((item) => String(item.id) === String(id))
-    setForm((current) => ({ ...current, cliente_id: id, cep_destino: client?.cep || '', endereco_destino: client?.endereco || '', quadra_destino: client?.quadra || '', lote_destino: client?.lote || '' }))
+    if (!client) { setForm((current) => ({ ...current, cliente_id: '' })); return }
+    if (requiresClientAddressConfirmation(form, id, addressEdited)) { setPendingClientId(String(id)); return }
+    setForm((current) => populateDeliveryAddress(current, client)); setAddressEdited(false); setPendingClientId(null)
+  }
+  function changeDestination(field, value) {
+    setForm((current) => ({ ...current, [field]: value })); setAddressEdited(true)
+  }
+  function confirmClientChange() {
+    const client = clients.find((item) => String(item.id) === pendingClientId)
+    if (client) setForm((current) => populateDeliveryAddress(current, client))
+    setAddressEdited(false); setPendingClientId(null)
   }
   async function save(event) {
     event.preventDefault(); setError('')
@@ -110,14 +123,15 @@ export default function Deliveries({ api, csrfToken, onExpired, onNavigate, onDe
         <label className="account-field">Entregador *<select required value={form.entregador_id} onChange={(event) => setForm({ ...form, entregador_id: event.target.value })}><option value="">Selecione um entregador</option>{deliverers.map((item) => <option value={item.id} key={item.id}>{item.nome} · #{item.id}{item.cpf ? ` · CPF ${item.cpf}` : ''}{item.email ? ` · ${item.email}` : ''}</option>)}</select></label>
         <label className="account-field delivery-full-row">Descrição da entrega *<input required maxLength={500} value={form.descricao} onChange={(event) => setForm({ ...form, descricao: event.target.value })} placeholder="Ex.: medicamentos do pedido" /></label>
         <p className="delivery-address-intro">Destino copiado do cadastro do cliente. Você pode ajustar este snapshot sem alterar o endereço cadastrado.</p>
-        <label className="account-field">CEP destino<input inputMode="numeric" value={cepMask(form.cep_destino)} onChange={(event) => setForm({ ...form, cep_destino: cepMask(event.target.value) })} /></label>
-        <label className="account-field">Rua / Logradouro<input maxLength={255} value={form.endereco_destino} onChange={(event) => setForm({ ...form, endereco_destino: event.target.value })} /></label>
-        <label className="account-field">Quadra<input maxLength={50} value={form.quadra_destino} onChange={(event) => setForm({ ...form, quadra_destino: event.target.value })} /></label>
-        <label className="account-field">Lote<input maxLength={50} value={form.lote_destino} onChange={(event) => setForm({ ...form, lote_destino: event.target.value })} /></label>
-        <label className="account-field">Número<input maxLength={30} value={form.numero_destino} onChange={(event) => setForm({ ...form, numero_destino: event.target.value })} /></label>
-        <label className="account-field">Setor / bairro<input maxLength={120} value={form.setor_destino} onChange={(event) => setForm({ ...form, setor_destino: event.target.value })} /></label>
-        <label className="account-field">Cidade<input maxLength={100} value={form.cidade_destino} onChange={(event) => setForm({ ...form, cidade_destino: event.target.value })} /></label>
-        <label className="account-field">Estado / UF<input maxLength={2} value={form.estado_destino} onChange={(event) => setForm({ ...form, estado_destino: event.target.value.toUpperCase().slice(0, 2) })} /></label>
+        {pendingClientId && <div className="delivery-prerequisites delivery-client-switch" role="alert"><strong>Substituir o endereço editado?</strong><p>Ao trocar de cliente, o destino será carregado do cadastro do novo cliente. As alterações manuais atuais serão substituídas.</p><button type="button" className="secondary-button" onClick={() => setPendingClientId(null)}>Manter endereço atual</button> <button type="button" className="submit-button account-submit" onClick={confirmClientChange}>Trocar cliente e carregar endereço</button></div>}
+        <label className="account-field">CEP destino<input inputMode="numeric" value={cepMask(form.cep_destino)} onChange={(event) => changeDestination('cep_destino', cepMask(event.target.value))} /></label>
+        <label className="account-field">Rua / Logradouro<input maxLength={255} value={form.endereco_destino} onChange={(event) => changeDestination('endereco_destino', event.target.value)} /></label>
+        <label className="account-field">Quadra<input maxLength={50} value={form.quadra_destino} onChange={(event) => changeDestination('quadra_destino', event.target.value)} /></label>
+        <label className="account-field">Lote<input maxLength={50} value={form.lote_destino} onChange={(event) => changeDestination('lote_destino', event.target.value)} /></label>
+        <label className="account-field">Número<input maxLength={30} value={form.numero_destino} onChange={(event) => changeDestination('numero_destino', event.target.value)} /></label>
+        <label className="account-field">Setor / bairro<input maxLength={120} value={form.setor_destino} onChange={(event) => changeDestination('setor_destino', event.target.value)} /></label>
+        <label className="account-field">Cidade<input maxLength={100} value={form.cidade_destino} onChange={(event) => changeDestination('cidade_destino', event.target.value)} /></label>
+        <label className="account-field">Estado / UF<input maxLength={2} value={form.estado_destino} onChange={(event) => changeDestination('estado_destino', event.target.value.toLocaleUpperCase('pt-BR').slice(0, 2))} /></label>
         <label className="account-field delivery-full-row">Observações<textarea rows="3" maxLength={5000} value={form.observacoes} onChange={(event) => setForm({ ...form, observacoes: event.target.value })} /></label>
       </div><div className="account-actions"><button className="secondary-button" type="button" disabled={saving} onClick={() => setFormOpen(false)}>Cancelar</button><button className="submit-button account-submit" type="submit" disabled={saving}>{saving ? <><span className="spinner" /> Salvando...</> : selected ? 'Salvar alterações' : 'Cadastrar entrega'}</button></div></form>}
     </section></div>}
