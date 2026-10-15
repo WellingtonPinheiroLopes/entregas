@@ -177,6 +177,8 @@ test('edita campos permitidos e cancela com motivo auditado em transação', asy
   assert.equal(cancelled.body.entrega.motivo_cancelamento, 'Cliente indisponível no endereço');
   assert.equal(cancelled.body.entrega.cancelada_por, 1); assert.equal(history.at(-1).motivo, 'Cliente indisponível no endereço');
   assert.equal((await mutate('PATCH', '/api/deliveries/1/status', { status: 'concluida' })).response.status, 409);
+  assert.equal((await mutate('PATCH', '/api/deliveries/1/status', { status: 'na_farmacia' })).response.status, 409);
+  assert.equal((await mutate('PATCH', '/api/deliveries/1/status', { status: 'em_transito' })).response.status, 409);
   assert.equal((await mutate('POST', '/api/deliveries/1/cancel', { motivo: 'Tentar outra vez' })).response.status, 409);
 });
 
