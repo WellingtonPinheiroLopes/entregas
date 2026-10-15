@@ -124,3 +124,31 @@ button:disabled { cursor: wait; opacity: .7; }.spinner { width: 17px; height: 17
 .deliverer-row-actions { display:flex; align-items:center; gap:6px; }.delete-deliverer-button { display:inline-flex; align-items:center; gap:5px; color:#a43c3c; }.delete-deliverer-button:hover { border-color:#e7b8b8; background:#fff5f4; }.delete-deliverer-button svg { width:15px; height:15px; }.delete-confirmation { width:min(100%,440px); text-align:center; }.delete-confirmation-icon { display:grid; place-items:center; width:48px; height:48px; margin:0 auto 14px; border-radius:15px; color:#a43c3c; background:#fff0ef; }.delete-confirmation-icon svg { width:25px; height:25px; }.delete-confirmation h2 { margin:0 0 10px; color:var(--green-900); font:700 22px/1.25 'Manrope',sans-serif; }.delete-confirmation>p { margin:0 0 10px; color:var(--muted); font-size:13px; line-height:1.55; }.delete-confirmation .delete-confirmation-name { color:var(--ink); font-size:15px; font-weight:700; }.delete-confirmation .account-actions { justify-content:center; margin-top:20px; }.danger-button { display:inline-flex; align-items:center; justify-content:center; gap:9px; min-height:44px; padding:0 18px; border:1px solid #a43c3c; border-radius:8px; color:#fff; background:#a43c3c; font-size:13px; font-weight:700; }.danger-button:hover:not(:disabled) { border-color:#842d2d; background:#842d2d; }
 @media (max-width:620px) { .deliverer-toolbar { align-items:stretch; flex-direction:column; }.deliverer-toolbar .account-submit { width:100%; }.deliverer-fields { grid-template-columns:1fr; gap:0; }.deliverer-modal { padding:24px 19px; } }
 @media (max-width:620px) { .topbar { height:auto; min-height:66px; flex-wrap:wrap; gap:8px; padding:10px 12px; }.topbar-right { flex:1 1 100%; justify-content:space-between; flex-wrap:wrap; }.topbar-right .nav-button { padding:7px 5px; font-size:10px; } }
+
+/* Keep delivery search and filters aligned without changing their behavior. */
+.deliveries-page .users-heading { margin-bottom: 20px; }
+.deliveries-page .deliverer-toolbar { align-items: center; gap: 18px; margin-bottom: 16px; }
+.deliveries-page .deliverer-toolbar .users-search { min-width: 0; max-width: none; }
+.deliveries-page .deliverer-toolbar .users-search input { height: 44px; margin-top: 7px; }
+.deliveries-page .deliverer-toolbar .account-submit { min-height: 44px; white-space: nowrap; }
+.deliveries-page .delivery-filters {
+  grid-template-columns: minmax(100px, .65fr) minmax(170px, 1.4fr) minmax(170px, 1.4fr) minmax(145px, .95fr) minmax(145px, .95fr);
+  align-items: start;
+  gap: 12px;
+  margin: 0 0 20px;
+}
+.deliveries-page .delivery-filters > label,
+.deliveries-page .delivery-filters .record-search { min-width: 0; margin: 0; }
+.deliveries-page .delivery-filters > label { display: flex; flex-direction: column; gap: 8px; }
+.deliveries-page .delivery-filters .record-search > label { margin: 0; line-height: 14px; }
+.deliveries-page .delivery-filters select,
+.deliveries-page .delivery-filters input { box-sizing: border-box; width: 100%; height: 40px; min-height: 40px; }
+@media (max-width: 900px) {
+  .deliveries-page .delivery-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .deliveries-page .delivery-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 440px) {
+  .deliveries-page .delivery-filters { grid-template-columns: minmax(0, 1fr); }
+}
