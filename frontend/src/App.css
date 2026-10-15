@@ -93,10 +93,18 @@ button:disabled { cursor: wait; opacity: .7; }.spinner { width: 17px; height: 17
 .delivery-history li strong { color: var(--green-900); font-size: 12px; }
 .delivery-history li span, .delivery-history li small { color: #708077; font-size: 11px; }
 .delivery-detail-actions .danger-button { min-height: 46px; white-space: nowrap; }
+.delivery-edit-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 0 0 18px; padding: 12px 14px; border: 1px solid #e6eee8; border-radius: 9px; background: #f8fbf9; color: #52665a; font-size: 12px; }
+.delivery-edit-actions > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.delivery-edit-actions .account-submit, .delivery-edit-actions .danger-button { min-height: 40px; }
+.delivery-cancel-backdrop { z-index: 8; }
+.delivery-cancel-dialog { width: min(100%, 520px); }
+.delivery-cancel-dialog .account-heading { margin-bottom: 15px; }
+.delivery-cancel-dialog .account-actions { margin-top: 18px; }
 @media (max-width: 900px) { .delivery-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .delivery-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.delivery-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }.delivery-detail-actions { grid-template-columns: 1fr 1fr; }.delivery-detail-actions .account-field { grid-column: 1 / -1; }.delivery-detail-actions .danger-button { grid-column: 2; } }
 @media (max-width: 620px) { .delivery-overview { padding: 17px 15px; }.delivery-metric { min-height: 62px; padding: 11px; }.delivery-detail-grid { grid-template-columns: 1fr; }.delivery-full-row, .delivery-address-intro { grid-column: 1; }.delivery-detail-actions { grid-template-columns: 1fr; }.delivery-detail-actions .account-field, .delivery-detail-actions .danger-button { grid-column: 1; }.delivery-modal { padding: 23px 17px; } }
 @media (max-width: 480px) { .delivery-filters { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 620px) { .delivery-edit-actions { align-items: stretch; flex-direction: column; }.delivery-edit-actions > div { display: grid; grid-template-columns: 1fr; }.delivery-edit-actions > div > button { width: 100%; } }
 
 .success-message { margin: 14px 0 0; padding: 11px 13px; border: 1px solid #cbe6d3; border-radius: 8px; color: #205d38; background: #eff8f1; font-size: 13px; line-height: 1.5; }
 .topbar-right .nav-button { padding: 9px 12px; border: 1px solid transparent; border-radius: 7px; color: #617168; background: transparent; font-size: 12px; font-weight: 600; }
