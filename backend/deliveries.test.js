@@ -152,11 +152,18 @@ test('lista com filtros, retorna detalhes e histórico, aplica transições perm
   assert.equal((await mutate('PATCH', '/api/deliveries/1/status', { status: 'concluida' })).response.status, 409);
   const transit = await mutate('PATCH', '/api/deliveries/1/status', { status: 'em_transito' });
   assert.equal(transit.response.status, 200); assert.equal(transit.body.entrega.status, 'em_transito');
-  assert.equal((await mutate('PATCH', '/api/deliveries/1/status', { status: 'na_farmacia' })).response.status, 400);
+  const returnToPharmacy = await mutate('PATCH', '/api/deliveries/1/status', { status: 'na_farmacia' });
+  assert.equal(returnToPharmacy.response.status, 200); assert.equal(returnToPharmacy.body.entrega.status, 'na_farmacia');
+  assert.equal(history.at(-1).status_anterior, 'em_transito'); assert.equal(history.at(-1).status_novo, 'na_farmacia'); assert.equal(history.at(-1).usuario_id, 1);
+  assert.equal((await mutate('PATCH', '/api/deliveries/1/status', { status: 'concluida' })).response.status, 409);
+  assert.equal((await mutate('PATCH', '/api/deliveries/1/status', { status: 'cancelada' })).response.status, 400);
+  assert.equal((await mutate('PATCH', '/api/deliveries/1/status', { status: 'em_transito' })).response.status, 200);
   const completed = await mutate('PATCH', '/api/deliveries/1/status', { status: 'concluida' });
   assert.equal(completed.response.status, 200); assert.equal(completed.body.entrega.status, 'concluida');
   assert.equal((await mutate('PATCH', '/api/deliveries/1', { descricao: 'Não editar concluída' })).response.status, 409);
-  assert.equal((await request('/api/deliveries/1')).body.historico.length, 3);
+  assert.equal((await request('/api/deliveries/1')).body.historico.length, 5);
+  const refreshedSummary = await request('/api/deliveries/summary');
+  assert.equal(refreshedSummary.body.statuses.concluida, 1); assert.equal(refreshedSummary.body.statuses.na_farmacia, 1);
 });
 
 test('edita campos permitidos e cancela com motivo auditado em transação', async () => {

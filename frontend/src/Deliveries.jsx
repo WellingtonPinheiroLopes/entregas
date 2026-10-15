@@ -23,6 +23,7 @@ export default function Deliveries({ api, csrfToken, onExpired, onDeliveryChange
   const [formOpen, setFormOpen] = useState(false)
   const [selected, setSelected] = useState(null)
   const [detail, setDetail] = useState(null)
+  const [returnDetailId, setReturnDetailId] = useState(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -31,6 +32,7 @@ export default function Deliveries({ api, csrfToken, onExpired, onDeliveryChange
   const [detailLoading, setDetailLoading] = useState(false)
   const [addressEdited, setAddressEdited] = useState(false)
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
+  const [statusConfirmationOpen, setStatusConfirmationOpen] = useState(false)
   const [clientQuery, setClientQuery] = useState('')
   const [selectedClient, setSelectedClient] = useState(null)
   const [previousClient, setPreviousClient] = useState(null)
@@ -49,6 +51,7 @@ export default function Deliveries({ api, csrfToken, onExpired, onDeliveryChange
   function reloadList() { setItems(null); setReload((value) => value + 1) }
   function startNew() {
     setForm({ ...emptyForm }); setSelected(null); setFormOpen(true); setError(''); setAddressEdited(false)
+    setReturnDetailId(null)
     setClientQuery(''); setSelectedClient(null); setPreviousClient(null); setPendingClient(null)
     setDelivererQuery(''); setSelectedDeliverer(null)
   }
@@ -56,6 +59,22 @@ export default function Deliveries({ api, csrfToken, onExpired, onDeliveryChange
     setSelected(item); setForm({ cliente_id: item.cliente_id, entregador_id: item.entregador_id, descricao: item.descricao, cep_destino: item.cep_destino || '', endereco_destino: item.endereco_destino || '', quadra_destino: item.quadra_destino || '', lote_destino: item.lote_destino || '', numero_destino: item.numero_destino || '', setor_destino: item.setor_destino || '', cidade_destino: item.cidade_destino || '', estado_destino: item.estado_destino || '', observacoes: item.observacoes || '' }); setFormOpen(true); setError(''); setAddressEdited(false); setPendingClient(null)
     setClientQuery(item.cliente_nome || ''); setSelectedClient({ id: item.cliente_id, nome: item.cliente_nome, cpf: item.cliente_cpf }); setPreviousClient(null)
     setDelivererQuery(item.entregador_nome || ''); setSelectedDeliverer({ id: item.entregador_id, nome: item.entregador_nome, cpf: item.entregador_cpf })
+  }
+  function editFromDetail() {
+    if (!detail) return
+    const item = detail.entrega
+    setReturnDetailId(item.id); setDetail(null); openEdit(item)
+  }
+  function closeEditForm() {
+    const deliveryId = returnDetailId
+    setFormOpen(false); setSelected(null); setReturnDetailId(null)
+    if (deliveryId) openDetail(deliveryId)
+  }
+  function openReturnConfirmation() {
+    setError(''); setCancelDialogOpen(false); setStatusConfirmationOpen(true)
+  }
+  function closeReturnConfirmation() {
+    if (!actionBusy) { setStatusConfirmationOpen(false); setError('') }
   }
   function changeClientQuery(value) {
     setClientQuery(value)
@@ -126,7 +145,9 @@ export default function Deliveries({ api, csrfToken, onExpired, onDeliveryChange
     try {
       const result = await api(selected ? `/deliveries/${selected.id}` : '/deliveries', { method: selected ? 'PATCH' : 'POST', headers: { 'X-CSRF-Token': csrfToken }, body: JSON.stringify(payload) })
       setNotice(result.mensagem); setFormOpen(false); setSelected(null); reloadList(); onDeliveryChange()
-      if (detail && selected) await openDetail(selected.id)
+      const deliveryId = returnDetailId || (detail && selected ? selected.id : null)
+      setReturnDetailId(null)
+      if (deliveryId) await openDetail(deliveryId)
     } catch (requestError) { setError(requestError.message); if (/autenticação|sessão inválida/i.test(requestError.message)) onExpired() }
     finally { setSaving(false) }
   }
@@ -139,18 +160,25 @@ export default function Deliveries({ api, csrfToken, onExpired, onDeliveryChange
   async function updateStatus(status) {
     const deliveryId = detail?.entrega.id || selected?.id
     if (!deliveryId || actionBusy) return
+    const currentStatus = detail?.entrega.status || selected?.status
+    const allowed = (currentStatus === 'na_farmacia' && status === 'em_transito') || (currentStatus === 'em_transito' && ['na_farmacia', 'concluida'].includes(status))
+    if (!allowed) return
     setActionBusy(true); setError('')
     try {
       const result = await api(`/deliveries/${deliveryId}/status`, { method: 'PATCH', headers: { 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ status }) })
       setNotice(result.mensagem); reloadList(); onDeliveryChange()
       if (detail) await openDetail(deliveryId)
-      else if (result.entrega.status === 'concluida') { setFormOpen(false); setSelected(null); await openDetail(deliveryId) }
+      else if (result.entrega.status === 'concluida') { setFormOpen(false); setSelected(null); setReturnDetailId(null); await openDetail(deliveryId) }
       else setSelected((current) => current?.id === deliveryId ? { ...current, status: result.entrega.status } : current)
-    } catch (requestError) { setError(requestError.message); if (/autenticação|sessão inválida/i.test(requestError.message)) onExpired() }
+      return true
+    } catch (requestError) { setError(requestError.message); if (/autenticação|sessão inválida/i.test(requestError.message)) onExpired(); return false }
     finally { setActionBusy(false) }
   }
+  async function confirmReturnToPharmacy() {
+    if (await updateStatus('na_farmacia')) setStatusConfirmationOpen(false)
+  }
   function openCancelDialog() {
-    setCancelReason(''); setError(''); setCancelDialogOpen(true)
+    setCancelReason(''); setError(''); setStatusConfirmationOpen(false); setCancelDialogOpen(true)
   }
   function closeCancelDialog() {
     if (actionBusy) return
@@ -166,7 +194,7 @@ export default function Deliveries({ api, csrfToken, onExpired, onDeliveryChange
       const result = await api(`/deliveries/${deliveryId}/cancel`, { method: 'POST', headers: { 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ motivo: cancelReason.trim() }) })
       setNotice(result.mensagem); setCancelDialogOpen(false); setCancelReason(''); reloadList(); onDeliveryChange()
       if (detail) await openDetail(deliveryId)
-      else { setFormOpen(false); setSelected(null); await openDetail(deliveryId) }
+      else { setFormOpen(false); setSelected(null); setReturnDetailId(null); await openDetail(deliveryId) }
     } catch (requestError) { setError(requestError.message); if (/autenticação|sessão inválida/i.test(requestError.message)) onExpired() }
     finally { setActionBusy(false) }
   }
@@ -178,11 +206,11 @@ export default function Deliveries({ api, csrfToken, onExpired, onDeliveryChange
     {error && !formOpen && !detail && <p className="error-message" role="alert">{error}</p>}{notice && <p className="success-message" role="status">{notice}</p>}
     <div className="deliverer-toolbar"><label className="users-search">Pesquisar descrição, cliente ou entregador<input type="search" placeholder="Ex.: pedido ou nome" value={filters.q} onChange={(event) => changeFilter('q', event.target.value)} /></label><button className="submit-button account-submit" type="button" onClick={startNew}>＋ Nova entrega</button></div>
     <div className="delivery-filters"><label>Status<select value={filters.status} onChange={(event) => changeFilter('status', event.target.value)}><option value="">Todos</option>{Object.entries(STATUS_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><RecordSearch api={api} endpoint="/clients" label="Cliente" query={clientFilterQuery} selected={clientFilterSelected} onQueryChange={changeClientFilterQuery} onSelect={selectClientFilter} details={clientDetails} onExpired={onExpired} /><RecordSearch api={api} endpoint="/deliverers" label="Entregador" query={delivererFilterQuery} selected={delivererFilterSelected} onQueryChange={changeDelivererFilterQuery} onSelect={selectDelivererFilter} details={delivererDetails} onExpired={onExpired} /><label>De<input type="date" value={filters.de} onChange={(event) => changeFilter('de', event.target.value)} /></label><label>Até<input type="date" value={filters.ate} onChange={(event) => changeFilter('ate', event.target.value)} /></label></div>
-    {items === null ? <div className="account-loading"><span className="spinner" /> Carregando entregas...</div> : items.length === 0 ? <div className="users-empty"><span aria-hidden="true">⌕</span><h2>{Object.values(filters).some(Boolean) ? 'Nenhuma entrega encontrada' : 'Nenhuma entrega cadastrada'}</h2><p>{Object.values(filters).some(Boolean) ? 'Ajuste os filtros e tente novamente.' : 'Cadastre a primeira entrega para acompanhar a operação.'}</p></div> : <div className="users-table-wrap"><table className="users-table deliveries-table"><thead><tr><th>ID</th><th>Cliente</th><th>Entregador</th><th>Descrição</th><th>Destino</th><th>Criada em</th><th>Status</th><th>Ações</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td data-label="ID">#{item.id}</td><td data-label="Cliente">{item.cliente_nome} <small>#{item.cliente_id}{item.cliente_cpf ? ` · ${item.cliente_cpf}` : ''}</small></td><td data-label="Entregador">{item.entregador_nome} <small>#{item.entregador_id}{item.entregador_cpf ? ` · ${item.entregador_cpf}` : ''}</small></td><td data-label="Descrição">{item.descricao}</td><td data-label="Destino">{addressSummary(item)}</td><td data-label="Criada em">{displayDate(item.criado_em)}</td><td data-label="Status"><span className={`delivery-status status-${item.status}`}>{STATUS_LABELS[item.status]}</span></td><td data-label="Ações"><div className="deliverer-row-actions">{!['concluida', 'cancelada'].includes(item.status) && <button className="edit-user-button" type="button" onClick={() => openEdit(item)}>Editar</button>}</div></td></tr>)}</tbody></table></div>}
+    {items === null ? <div className="account-loading"><span className="spinner" /> Carregando entregas...</div> : items.length === 0 ? <div className="users-empty"><span aria-hidden="true">⌕</span><h2>{Object.values(filters).some(Boolean) ? 'Nenhuma entrega encontrada' : 'Nenhuma entrega cadastrada'}</h2><p>{Object.values(filters).some(Boolean) ? 'Ajuste os filtros e tente novamente.' : 'Cadastre a primeira entrega para acompanhar a operação.'}</p></div> : <div className="users-table-wrap"><table className="users-table deliveries-table"><thead><tr><th>ID</th><th>Cliente</th><th>Entregador</th><th>Descrição</th><th>Destino</th><th>Criada em</th><th>Status</th></tr></thead><tbody>{items.map((item) => <tr key={item.id} tabIndex={0} aria-label={`Gerenciar entrega ${item.id}: ${item.descricao}. Pressione Enter ou Espaço para abrir.`} onClick={(event) => { if (event.target.closest('a,button,input,select,textarea,[role="button"]')) return; openDetail(item.id) }} onKeyDown={(event) => { if (event.target !== event.currentTarget) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openDetail(item.id) } }}><td data-label="ID">#{item.id}</td><td data-label="Cliente">{item.cliente_nome} <small>#{item.cliente_id}{item.cliente_cpf ? ` · ${item.cliente_cpf}` : ''}</small></td><td data-label="Entregador">{item.entregador_nome} <small>#{item.entregador_id}{item.entregador_cpf ? ` · ${item.entregador_cpf}` : ''}</small></td><td data-label="Descrição">{item.descricao}</td><td data-label="Destino">{addressSummary(item)}</td><td data-label="Criada em">{displayDate(item.criado_em)}</td><td data-label="Status"><span className={`delivery-status status-${item.status}`}>{STATUS_LABELS[item.status]}</span></td></tr>)}</tbody></table></div>}
 
-    {formOpen && <div className="user-modal-backdrop" role="presentation"><section className="user-modal deliverer-modal delivery-modal" role="dialog" aria-modal="true" aria-labelledby="delivery-form-title"><header className="account-heading"><div><span className="section-label">DADOS DA ENTREGA</span><h2 id="delivery-form-title">{selected ? `Editar entrega #${selected.id}` : 'Nova entrega'}</h2><p>O status inicial é definido automaticamente como Na farmácia.</p></div><button className="modal-close" type="button" aria-label="Fechar" onClick={() => setFormOpen(false)}>×</button></header>
+    {formOpen && <div className="user-modal-backdrop" role="presentation"><section className="user-modal deliverer-modal delivery-modal" role="dialog" aria-modal="true" aria-labelledby="delivery-form-title"><header className="account-heading"><div><span className="section-label">DADOS DA ENTREGA</span><h2 id="delivery-form-title">{selected ? `Editar entrega #${selected.id}` : 'Nova entrega'}</h2><p>O status inicial é definido automaticamente como Na farmácia.</p></div><button className="modal-close" type="button" aria-label="Fechar" onClick={closeEditForm}>×</button></header>
       {error && !cancelDialogOpen && <p className="error-message" role="alert">{error}</p>}
-      {selected && !['concluida', 'cancelada'].includes(selected.status) && <div className="delivery-edit-actions"><span>Status atual: <strong className={`delivery-status status-${selected.status}`}>{STATUS_LABELS[selected.status]}</strong></span><div>{selected.status === 'na_farmacia' && <button type="button" className="submit-button account-submit" disabled={actionBusy} onClick={() => updateStatus('em_transito')}>Marcar em trânsito</button>}{selected.status === 'em_transito' && <button type="button" className="submit-button account-submit" disabled={actionBusy} onClick={() => updateStatus('concluida')}>Concluir entrega</button>}<button type="button" className="danger-button" disabled={actionBusy} onClick={openCancelDialog}>Cancelar entrega</button></div></div>}
+      {selected && !['concluida', 'cancelada'].includes(selected.status) && <div className="delivery-edit-actions"><span>Status atual: <strong className={`delivery-status status-${selected.status}`}>{STATUS_LABELS[selected.status]}</strong></span><div>{selected.status === 'na_farmacia' && <button type="button" className="submit-button account-submit" disabled={actionBusy} onClick={() => updateStatus('em_transito')}>Marcar em trânsito</button>}{selected.status === 'em_transito' && <><button type="button" className="secondary-button" disabled={actionBusy} onClick={openReturnConfirmation}>Voltar para Na farmácia</button><button type="button" className="submit-button account-submit" disabled={actionBusy} onClick={() => updateStatus('concluida')}>Concluir entrega</button></>}<button type="button" className="danger-button" disabled={actionBusy} onClick={openCancelDialog}>Cancelar entrega</button></div></div>}
       <form onSubmit={save} noValidate><div className="deliverer-fields">
         <RecordSearch api={api} endpoint="/clients" label="Cliente" query={clientQuery} selected={selectedClient} onQueryChange={changeClientQuery} onSelect={selectClient} details={clientDetails} disabled={!!selected} required onExpired={onExpired} />
         <RecordSearch api={api} endpoint="/deliverers" label="Entregador" query={delivererQuery} selected={selectedDeliverer} onQueryChange={changeDelivererQuery} onSelect={selectDeliverer} details={delivererDetails} disabled={!!selected} required onExpired={onExpired} />
@@ -199,15 +227,16 @@ export default function Deliveries({ api, csrfToken, onExpired, onDeliveryChange
         <label className="account-field">Cidade<input maxLength={100} value={form.cidade_destino} onChange={(event) => changeDestination('cidade_destino', event.target.value)} /></label>
         <label className="account-field">Estado / UF<input maxLength={2} value={form.estado_destino} onChange={(event) => changeDestination('estado_destino', event.target.value.toLocaleUpperCase('pt-BR').slice(0, 2))} /></label>
         <label className="account-field delivery-full-row">Observações<textarea rows="3" maxLength={5000} value={form.observacoes} onChange={(event) => setForm({ ...form, observacoes: event.target.value })} /></label>
-      </div><div className="account-actions"><button className="secondary-button" type="button" disabled={saving} onClick={() => setFormOpen(false)}>Cancelar</button><button className="submit-button account-submit" type="submit" disabled={saving}>{saving ? <><span className="spinner" /> Salvando...</> : selected ? 'Salvar alterações' : 'Cadastrar entrega'}</button></div></form>
+      </div><div className="account-actions"><button className="secondary-button" type="button" disabled={saving} onClick={closeEditForm}>{returnDetailId ? 'Voltar à entrega' : 'Cancelar'}</button><button className="submit-button account-submit" type="submit" disabled={saving}>{saving ? <><span className="spinner" /> Salvando...</> : selected ? 'Salvar alterações' : 'Cadastrar entrega'}</button></div></form>
     </section></div>}
 
     {(detail || detailLoading) && <div className="user-modal-backdrop" role="presentation"><section className="user-modal delivery-modal" role="dialog" aria-modal="true" aria-labelledby="delivery-detail-title"><header className="account-heading"><div><span className="section-label">ACOMPANHAMENTO</span><h2 id="delivery-detail-title">{detail ? `Entrega #${detail.entrega.id}` : 'Carregando entrega...'}</h2></div><button className="modal-close" type="button" aria-label="Fechar" onClick={() => { setDetail(null); setError('') }}>×</button></header>
       {detailLoading && <div className="account-loading"><span className="spinner" /> Carregando detalhes...</div>}{error && !cancelDialogOpen && <p className="error-message" role="alert">{error}</p>}
       {detail && <><div className="delivery-detail-grid"><div><span>Status</span><strong className={`delivery-status status-${detail.entrega.status}`}>{STATUS_LABELS[detail.entrega.status]}</strong></div><div><span>Cliente</span><strong>{detail.entrega.cliente_nome} · #{detail.entrega.cliente_id}</strong></div><div><span>Entregador</span><strong>{detail.entrega.entregador_nome} · #{detail.entrega.entregador_id}</strong></div><div><span>Criada em</span><strong>{displayDate(detail.entrega.criado_em)}</strong></div><div className="delivery-full-row"><span>Descrição</span><strong>{detail.entrega.descricao}</strong></div><div className="delivery-full-row"><span>Endereço de destino (snapshot)</span><strong>{addressSummary(detail.entrega)}{detail.entrega.cep_destino ? ` · CEP ${cepMask(detail.entrega.cep_destino)}` : ''}</strong></div>{detail.entrega.observacoes && <div className="delivery-full-row"><span>Observações</span><strong className="delivery-preserve-whitespace">{detail.entrega.observacoes}</strong></div>}{detail.entrega.motivo_cancelamento && <div className="delivery-full-row"><span>Motivo do cancelamento</span><strong className="delivery-preserve-whitespace">{detail.entrega.motivo_cancelamento}</strong></div>}</div>
-        {!terminal && <div className="delivery-detail-actions">{detail.entrega.status === 'na_farmacia' && <button type="button" className="submit-button account-submit" disabled={actionBusy} onClick={() => updateStatus('em_transito')}>Marcar em trânsito</button>}{detail.entrega.status === 'em_transito' && <button type="button" className="submit-button account-submit" disabled={actionBusy} onClick={() => updateStatus('concluida')}>Concluir entrega</button>}<button type="button" className="danger-button" disabled={actionBusy} onClick={openCancelDialog}>Cancelar entrega</button></div>}
+        {!terminal && <div className="delivery-detail-actions"><button type="button" className="edit-user-button" disabled={actionBusy} onClick={editFromDetail}>Editar dados</button>{detail.entrega.status === 'na_farmacia' && <button type="button" className="submit-button account-submit" disabled={actionBusy} onClick={() => updateStatus('em_transito')}>Marcar em trânsito</button>}{detail.entrega.status === 'em_transito' && <><button type="button" className="secondary-button" disabled={actionBusy} onClick={openReturnConfirmation}>Voltar para Na farmácia</button><button type="button" className="submit-button account-submit" disabled={actionBusy} onClick={() => updateStatus('concluida')}>Concluir entrega</button></>}<button type="button" className="danger-button" disabled={actionBusy} onClick={openCancelDialog}>Cancelar entrega</button></div>}
         <h3 className="delivery-history-title">Histórico de status</h3>{detail.historico.length ? <ol className="delivery-history">{detail.historico.map((entry) => <li key={entry.id}><strong>{STATUS_LABELS[entry.status_novo]}</strong><span>{entry.status_anterior ? `${STATUS_LABELS[entry.status_anterior]} → ` : 'Criada em '}{displayDate(entry.criado_em)}</span>{entry.usuario_nome && <small>Por {entry.usuario_nome}</small>}{entry.motivo && <small>Motivo: {entry.motivo}</small>}</li>)}</ol> : <p>Sem alterações registradas.</p>}</>}
     </section></div>}
     {cancelDialogOpen && <div className="user-modal-backdrop delivery-cancel-backdrop" role="presentation"><section className="user-modal delivery-cancel-dialog" role="dialog" aria-modal="true" aria-labelledby="cancel-delivery-title"><header className="account-heading"><div><span className="section-label">CONFIRMAÇÃO</span><h2 id="cancel-delivery-title">Cancelar entrega</h2><p>Entrega #{detail?.entrega.id || selected?.id}. O cancelamento não pode ser revertido.</p></div><button className="modal-close" type="button" aria-label="Fechar" disabled={actionBusy} onClick={closeCancelDialog}>×</button></header>{error && <p className="error-message" role="alert">{error}</p>}<form onSubmit={cancelDelivery} noValidate><label className="account-field">Motivo do cancelamento *<textarea required rows="4" maxLength={2000} value={cancelReason} onChange={(event) => { setCancelReason(event.target.value); if (error) setError('') }} placeholder="Descreva o motivo do cancelamento" /></label><div className="account-actions"><button type="button" className="secondary-button" disabled={actionBusy} onClick={closeCancelDialog}>Voltar</button><button type="submit" className="danger-button" disabled={actionBusy || cancelReason.trim().length < 3}>{actionBusy ? <><span className="spinner" /> Confirmando...</> : 'Confirmar cancelamento'}</button></div></form></section></div>}
+    {statusConfirmationOpen && <div className="user-modal-backdrop delivery-cancel-backdrop" role="presentation"><section className="user-modal delivery-cancel-dialog" role="dialog" aria-modal="true" aria-labelledby="return-status-title"><header className="account-heading"><div><span className="section-label">CONFIRMAÇÃO</span><h2 id="return-status-title">Voltar para Na farmácia</h2><p>Confirme o retorno da entrega #{detail?.entrega.id || selected?.id} para a farmácia.</p></div><button className="modal-close" type="button" aria-label="Fechar" disabled={actionBusy} onClick={closeReturnConfirmation}>×</button></header>{error && <p className="error-message" role="alert">{error}</p>}<div className="account-actions"><button type="button" className="secondary-button" disabled={actionBusy} onClick={closeReturnConfirmation}>Manter em trânsito</button><button type="button" className="submit-button account-submit" disabled={actionBusy} onClick={confirmReturnToPharmacy}>{actionBusy ? 'Atualizando...' : 'Confirmar retorno'}</button></div></section></div>}
   </section>
 }

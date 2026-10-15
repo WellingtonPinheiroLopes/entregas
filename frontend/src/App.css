@@ -100,6 +100,9 @@ button:disabled { cursor: wait; opacity: .7; }.spinner { width: 17px; height: 17
 .delivery-cancel-dialog { width: min(100%, 520px); }
 .delivery-cancel-dialog .account-heading { margin-bottom: 15px; }
 .delivery-cancel-dialog .account-actions { margin-top: 18px; }
+.deliveries-table tbody tr[tabindex="0"] { cursor: pointer; }
+.deliveries-table tbody tr[tabindex="0"]:hover td { background: #f1f7f2; }
+.deliveries-table tbody tr[tabindex="0"]:focus-visible { outline: 3px solid #70b88d; outline-offset: -3px; }
 @media (max-width: 900px) { .delivery-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .delivery-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.delivery-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }.delivery-detail-actions { grid-template-columns: 1fr 1fr; }.delivery-detail-actions .account-field { grid-column: 1 / -1; }.delivery-detail-actions .danger-button { grid-column: 2; } }
 @media (max-width: 620px) { .delivery-overview { padding: 17px 15px; }.delivery-metric { min-height: 62px; padding: 11px; }.delivery-detail-grid { grid-template-columns: 1fr; }.delivery-full-row, .delivery-address-intro { grid-column: 1; }.delivery-detail-actions { grid-template-columns: 1fr; }.delivery-detail-actions .account-field, .delivery-detail-actions .danger-button { grid-column: 1; }.delivery-modal { padding: 23px 17px; } }

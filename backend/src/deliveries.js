@@ -178,14 +178,14 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
   app.patch('/api/deliveries/:id/status', csrfGuard, authenticate, admin, async (req, res, next) => {
     if (!validId(req.params.id)) return res.status(400).json({ erro: 'Identificador inválido.' });
     const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
-    if (Object.keys(body).length !== 1 || !['em_transito', 'concluida'].includes(body.status)) return res.status(400).json({ erro: 'Status inválido. Use a ação de cancelamento para cancelar uma entrega.' });
+    if (Object.keys(body).length !== 1 || !['na_farmacia', 'em_transito', 'concluida'].includes(body.status)) return res.status(400).json({ erro: 'Status inválido. Use a ação de cancelamento para cancelar uma entrega.' });
     let connection;
     try {
       connection = await db.getConnection(); await connection.beginTransaction();
       const [rows] = await connection.execute('SELECT status FROM entregas WHERE id = ? LIMIT 1 FOR UPDATE', [req.params.id]);
       if (!rows[0]) { await connection.rollback(); return res.status(404).json({ erro: 'Entrega não encontrada.' }); }
       const current = rows[0].status; const next = body.status;
-      const allowed = (current === 'na_farmacia' && next === 'em_transito') || (current === 'em_transito' && next === 'concluida');
+      const allowed = (current === 'na_farmacia' && next === 'em_transito') || (current === 'em_transito' && ['na_farmacia', 'concluida'].includes(next));
       if (!allowed) { await connection.rollback(); return res.status(409).json({ erro: 'Esta mudança de status não é permitida.' }); }
       await connection.execute('UPDATE entregas SET status = ? WHERE id = ?', [next, req.params.id]);
       await connection.execute('INSERT INTO historico_status_entregas (entrega_id, status_anterior, status_novo, usuario_id) VALUES (?, ?, ?, ?)', [req.params.id, current, next, req.user?.id || null]);
