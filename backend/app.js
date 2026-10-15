@@ -6,6 +6,7 @@ const session = require('express-session');
 const bcrypt = require('bcrypt');
 const { rateLimit } = require('express-rate-limit');
 const MySQLSessionStore = require('./src/mysql-session-store');
+const { registerDeliveryRoutes } = require('./src/deliveries');
 
 const SESSION_MS = Number(process.env.SESSION_MAX_AGE_MS) || 8 * 60 * 60 * 1000;
 const PUBLIC_USER = 'id, nome, email, acesso, criado_em, atualizado_em';
@@ -519,6 +520,8 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
       next(error);
     }
   });
+
+  registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAccess });
 
   app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada.', caminho: req.path }));
   app.use((error, req, res, next) => {
