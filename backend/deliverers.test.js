@@ -137,6 +137,10 @@ test('consulta, pesquisa, atualiza campos e trata IDs inválidos/inexistentes', 
   assert.equal((await request('/api/deliverers/abc')).response.status, 400);
   assert.equal((await request('/api/deliverers/999')).response.status, 404);
   assert.equal((await request('/api/deliverers?q=Maria')).body.length, 1);
+  const duplicateEmail = await mutate('PATCH', '/api/deliverers/1', { email: 'admin@example.com', numero: '99' });
+  assert.equal(duplicateEmail.response.status, 409);
+  assert.equal(records.find((record) => record.id === 1).numero, '15');
+  assert.equal(users.find((user) => user.id === records.find((record) => record.id === 1).usuario_id).email, 'maria@example.com');
   const updated = await mutate('PATCH', '/api/deliverers/1', { email: 'maria@example.com', numero: '22', quadra: 'Q9' });
   assert.equal(updated.response.status, 200); assert.equal(updated.body.entregador.numero, '22'); assert.equal(updated.body.entregador.quadra, 'Q9');
   const addressUpdate = await mutate('PATCH', '/api/deliverers/1', { email: 'maria@example.com', cidade: 'Campinas', estado: 'mg' });

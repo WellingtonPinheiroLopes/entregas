@@ -69,11 +69,20 @@ test('convidado não pode listar nem alterar usuários', async () => {
 
 test('admin edita dados, valida perfil e e-mail duplicado; não pode rebaixar último admin', async () => {
   cookie = ''; await login('admin@example.com');
+  const adminUnchanged = await patch('/api/usuarios/1', { nome: 'Admin Atualizado', email: 'admin@example.com', acesso: 'administrador' });
+  assert.equal(adminUnchanged.response.status, 200); assert.equal(adminUnchanged.body.usuario.acesso, 'administrador');
   const updated = await patch('/api/usuarios/2', { nome: 'Pessoa Atualizada', email: 'updated@example.com', acesso: 'administrador' });
   assert.equal(updated.response.status, 200); assert.equal(updated.body.usuario.nome, 'Pessoa Atualizada');
   assert.equal(JSON.stringify(updated.body).includes('senha_hash'), false);
   assert.equal((await patch('/api/usuarios/2', { nome: 'Duplicado', email: 'admin@example.com', acesso: 'convidado' })).response.status, 409);
   assert.equal((await patch('/api/usuarios/2', { nome: 'Inválido', email: 'updated@example.com', acesso: 'root' })).response.status, 400);
+  const deliverer = await patch('/api/usuarios/2', { nome: 'Pessoa Atualizada', email: 'updated@example.com', acesso: 'entregador' });
+  assert.equal(deliverer.response.status, 200); assert.equal(deliverer.body.usuario.acesso, 'entregador');
+  cookie = ''; await login('updated@example.com', 'guest-password');
+  assert.equal((await request('/api/auth/me')).response.status, 200);
+  assert.equal((await request('/api/usuarios')).response.status, 403);
+  assert.equal((await patch('/api/usuarios/2', { nome: 'Escalada', email: 'updated@example.com', acesso: 'administrador' })).response.status, 403);
+  cookie = ''; await login('admin@example.com');
   assert.equal((await patch('/api/usuarios/2', { nome: 'Pessoa Atualizada', email: 'updated@example.com', acesso: 'convidado' })).response.status, 200);
   assert.equal((await patch('/api/usuarios/1', { nome: 'Admin', email: 'admin@example.com', acesso: 'convidado' })).response.status, 409);
 });

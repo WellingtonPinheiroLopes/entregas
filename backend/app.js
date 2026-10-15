@@ -203,7 +203,7 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
     const acesso = body.acesso;
     if (!nome || nome.length > 150) return res.status(400).json({ erro: 'Informe um nome com até 150 caracteres.' });
     if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ erro: 'Informe um e-mail válido.' });
-    if (!['administrador', 'convidado'].includes(acesso)) return res.status(400).json({ erro: 'Tipo de acesso inválido.' });
+    if (!['administrador', 'convidado', 'entregador'].includes(acesso)) return res.status(400).json({ erro: 'Tipo de acesso inválido.' });
     try {
       const connection = typeof db.getConnection === 'function' ? await db.getConnection() : null;
       if (connection) await connection.beginTransaction();
@@ -396,7 +396,7 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
       const [rows] = await db.execute(`${delivererSelect} WHERE d.id = ? LIMIT 1`, [req.params.id]);
       res.json({ entregador: rows[0], mensagem: 'Entregador atualizado com sucesso.' });
     } catch (error) {
-      if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ erro: error.message.includes('usuarios_email') ? 'Este e-mail já está vinculado a outra conta do sistema.' : 'Já existe um entregador cadastrado com este CPF.' });
+      if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ erro: /usuarios_email|uk_usuarios_email/i.test(error.message) ? 'Este e-mail já está vinculado a outra conta do sistema.' : 'Já existe um entregador cadastrado com este CPF.' });
       next(error);
     }
   });
