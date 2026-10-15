@@ -86,8 +86,14 @@ button:disabled { cursor: wait; opacity: .7; }.spinner { width: 17px; height: 17
 .delivery-preserve-whitespace { white-space: pre-wrap; }
 .delivery-detail-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: stretch; gap: 10px; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
 .delivery-detail-actions > button { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-width: 0; min-height: 46px; margin: 0; padding: 0 12px; border-radius: 8px; font-size: 13px; font-weight: 700; line-height: 1.2; box-shadow: none; white-space: nowrap; }
-.delivery-detail-actions .secondary-button, .delivery-edit-actions .secondary-button { border-color: #cde3d3; color: var(--green-800); background: var(--green-100); }
-.delivery-detail-actions .secondary-button:hover:not(:disabled), .delivery-edit-actions .secondary-button:hover:not(:disabled) { border-color: #a8cbb4; color: var(--green-800); background: #dff0e4; }
+.delivery-detail-actions .delivery-action-edit, .delivery-edit-actions .delivery-action-edit { border-color: #cde3d3; color: var(--green-800); background: var(--green-100); }
+.delivery-detail-actions .delivery-action-edit:hover:not(:disabled), .delivery-edit-actions .delivery-action-edit:hover:not(:disabled) { border-color: #a8cbb4; color: var(--green-800); background: #dff0e4; }
+.delivery-detail-actions .delivery-action-pharmacy, .delivery-edit-actions .delivery-action-pharmacy { border-color: #bfd3ee; color: #174a7a; background: #e8f1fc; }
+.delivery-detail-actions .delivery-action-pharmacy:hover:not(:disabled), .delivery-edit-actions .delivery-action-pharmacy:hover:not(:disabled) { border-color: #9bbbe5; color: #123b64; background: #d9e9fb; }
+.delivery-detail-actions .delivery-action-complete, .delivery-edit-actions .delivery-action-complete { border: 1px solid var(--green-800); color: #fff; background: var(--green-800); }
+.delivery-detail-actions .delivery-action-complete:hover:not(:disabled), .delivery-edit-actions .delivery-action-complete:hover:not(:disabled) { border-color: var(--green-900); color: #fff; background: var(--green-900); }
+.delivery-detail-actions .delivery-action-cancel, .delivery-edit-actions .delivery-action-cancel { border-color: #a43c3c; color: #fff; background: #a43c3c; }
+.delivery-detail-actions .delivery-action-cancel:hover:not(:disabled), .delivery-edit-actions .delivery-action-cancel:hover:not(:disabled) { border-color: #842d2d; color: #fff; background: #842d2d; }
 .delivery-detail-actions .account-field { min-width: 0; }
 .delivery-detail-actions textarea { min-height: 62px; }
 .delivery-history-title { margin: 22px 0 10px; color: var(--green-900); font: 700 15px 'Manrope', sans-serif; }
@@ -97,6 +103,7 @@ button:disabled { cursor: wait; opacity: .7; }.spinner { width: 17px; height: 17
 .delivery-history li span, .delivery-history li small { color: #708077; font-size: 11px; }
 .delivery-edit-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 0 0 18px; padding: 12px 14px; border: 1px solid #e6eee8; border-radius: 9px; background: #f8fbf9; color: #52665a; font-size: 12px; }
 .delivery-edit-actions > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.delivery-edit-actions > div > button { min-height: 40px; border-radius: 8px; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .delivery-edit-actions .account-submit, .delivery-edit-actions .danger-button { min-height: 40px; }
 .delivery-cancel-backdrop { z-index: 8; }
 .delivery-cancel-dialog { width: min(100%, 520px); }
