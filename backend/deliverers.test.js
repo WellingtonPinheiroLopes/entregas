@@ -13,14 +13,26 @@ const records = [];
 let nextId = 1;
 let failDelete = false;
 let restrictDelete = false;
+let failDelivererInsert = false;
+let nextUserId = 3;
 const publicUser = ({ senha_hash, ...user }) => user;
 const db = {
   async execute(sql, params = []) {
-    if (sql.includes('FROM usuarios WHERE email')) return [[...users.filter((user) => user.email === params[0])]];
+    if (sql.includes('FROM usuarios WHERE email') && sql.includes('id <>')) return [[...users.filter((user) => user.email.toLowerCase() === String(params[0]).toLowerCase() && String(user.id) !== String(params[1]))]];
+    if (sql.includes('FROM usuarios WHERE email')) return [[...users.filter((user) => user.email.toLowerCase() === String(params[0]).toLowerCase())]];
+    if (sql.startsWith('INSERT INTO usuarios')) { const row = { id: nextUserId++, nome: params[0], email: params[1], senha_hash: params[2], acesso: 'entregador' }; users.push(row); return [{ insertId: row.id }]; }
+    if (sql.startsWith('UPDATE usuarios SET nome = ?, email = ?')) { const row = users.find((user) => String(user.id) === String(params[2])); if (row) { row.nome = params[0]; row.email = params[1]; } return [{ affectedRows: row ? 1 : 0 }]; }
+    if (sql.startsWith('UPDATE usuarios SET email = ?')) { const row = users.find((user) => String(user.id) === String(params[1])); if (row) row.email = params[0]; return [{ affectedRows: row ? 1 : 0 }]; }
+    if (sql.startsWith('UPDATE usuarios SET nome = ?')) { const row = users.find((user) => String(user.id) === String(params[1])); if (row) row.nome = params[0]; return [{ affectedRows: row ? 1 : 0 }]; }
+    if (sql.includes('FROM entregadores d LEFT JOIN usuarios u')) { let selected = [...records]; if (sql.includes('WHERE d.id = ?')) selected = selected.filter((item) => String(item.id) === String(params[0])); if (sql.includes('WHERE d.nome LIKE')) selected = selected.filter((item) => item.nome.includes(params[0].slice(1, -1)) || (item.cpf || '').includes(params[1].slice(1, -1)) || (users.find((u) => u.id === item.usuario_id)?.email || '').includes(params[2].slice(1, -1))); const projected = selected.map((item) => ({ ...item, email: users.find((u) => u.id === item.usuario_id)?.email || null, acesso: users.find((u) => u.id === item.usuario_id)?.acesso || null })); return [sql.includes('ORDER BY') ? projected.reverse() : projected]; }
+    if (sql.includes('SELECT id, usuario_id FROM entregadores')) return [[...records.filter((item) => String(item.id) === String(params[0])).map(({ id, usuario_id }) => ({ id, usuario_id }))]];
+    if (sql.includes('SELECT nome FROM entregadores')) return [[...records.filter((item) => String(item.id) === String(params[0])).map(({ nome }) => ({ nome }))]];
+    if (sql.startsWith('UPDATE entregadores SET usuario_id')) { const item = records.find((row) => String(row.id) === String(params[1])); if (item) item.usuario_id = params[0]; return [{ affectedRows: item ? 1 : 0 }]; }
     if (sql.includes('FROM usuarios WHERE id')) return [[...users.filter((user) => String(user.id) === String(params[0])).map(publicUser)]];
     if (sql.includes('INSERT INTO entregadores')) {
+      if (failDelivererInsert) { const error = new Error('insert failed'); error.code = 'ER_TEST_FAILURE'; throw error; }
       const fields = ['nome', 'cpf', 'cidade', 'estado', 'cep', 'endereco', 'quadra', 'lote', 'numero', 'setor'];
-      const row = Object.fromEntries(fields.map((field, index) => [field, params[index]]));
+      const row = Object.fromEntries(fields.map((field, index) => [field, params[index + 1]])); row.usuario_id = params[0];
       if (row.cpf && records.some((item) => item.cpf === row.cpf)) { const error = new Error('Duplicate'); error.code = 'ER_DUP_ENTRY'; throw error; }
       Object.assign(row, { id: nextId++, criado_em: '2026-01-01', atualizado_em: '2026-01-01' }); records.push(row); return [{ insertId: row.id }];
     }
@@ -47,6 +59,7 @@ const db = {
     return [[]];
   },
   async query() { return [[]]; },
+  async getConnection() { let snapshot; return { execute: (...args) => db.execute(...args), async beginTransaction() { snapshot = { users: structuredClone(users), records: structuredClone(records), nextId, nextUserId }; }, async commit() {}, async rollback() { if (snapshot) { users.splice(0, users.length, ...snapshot.users); records.splice(0, records.length, ...snapshot.records); nextId = snapshot.nextId; nextUserId = snapshot.nextUserId; } }, release() {} }; },
 };
 let server, baseUrl, cookie = '';
 async function request(path, options = {}) {
@@ -81,7 +94,7 @@ test('endpoints de entregadores exigem autenticação administrativa', async () 
 
 test('valida entrada, CPF e normaliza strings ao cadastrar', async () => {
   cookie = ''; await login('admin@example.com');
-  const valid = { nome: '  Maria Silva  ', cpf: '529.982.247-25', cidade: 'São Paulo', estado: 'sp', cep: '01001-000', endereco: 'Rua Direita', quadra: 'Q2', lote: 'L4', numero: '15', setor: 'Centro' };
+  const valid = { nome: '  Maria Silva  ', email: '  MARIa@Example.com ', cpf: '529.982.247-25', cidade: 'São Paulo', estado: 'sp', cep: '01001-000', endereco: 'Rua Direita', quadra: 'Q2', lote: 'L4', numero: '15', setor: 'Centro' };
   assert.equal((await mutate('POST', '/api/deliverers', { ...valid, nome: ' ' })).response.status, 400);
   assert.equal((await mutate('POST', '/api/deliverers', { ...valid, endereco: '' })).response.status, 400);
   assert.equal((await mutate('POST', '/api/deliverers', { ...valid, cpf: 'abc' })).response.status, 400);
@@ -90,14 +103,32 @@ test('valida entrada, CPF e normaliza strings ao cadastrar', async () => {
   assert.equal((await mutate('POST', '/api/deliverers', { ...valid, cpf: '529.982.247-24' })).response.status, 400);
   assert.equal((await mutate('POST', '/api/deliverers', { ...valid, estado: 'XX' })).response.status, 400);
   const created = await mutate('POST', '/api/deliverers', valid);
-  assert.equal(created.response.status, 201); assert.equal(created.body.entregador.nome, 'Maria Silva');
+  assert.equal(created.response.status, 201); assert.equal(created.body.entregador.nome, 'Maria Silva'); assert.equal(created.body.entregador.email, 'maria@example.com'); assert.equal(created.body.entregador.acesso, 'entregador'); assert.equal(users.find((user) => user.id === created.body.entregador.usuario_id).acesso, 'entregador');
   assert.equal(created.body.entregador.cpf, '52998224725'); assert.equal(created.body.entregador.cep, '01001000');
   assert.equal(created.body.entregador.cidade, 'São Paulo'); assert.equal(created.body.entregador.estado, 'SP');
   assert.equal((await mutate('POST', '/api/deliverers', valid)).response.status, 409);
-  const withoutCpf = await mutate('POST', '/api/deliverers', { ...valid, nome: 'Sem CPF', cpf: '' });
+  const withoutCpf = await mutate('POST', '/api/deliverers', { ...valid, nome: 'Sem CPF', email: 'semcpf@example.com', cpf: '' });
   assert.equal(withoutCpf.response.status, 201); assert.equal(withoutCpf.body.entregador.cpf, null);
-  const manual = await mutate('POST', '/api/deliverers', { nome: 'Cadastro manual', endereco: 'Rua sem consulta' });
+  const manual = await mutate('POST', '/api/deliverers', { nome: 'Cadastro manual', email: 'manual@example.com', endereco: 'Rua sem consulta' });
   assert.equal(manual.response.status, 201); assert.equal(manual.body.entregador.cidade, null); assert.equal(manual.body.entregador.estado, null);
+});
+
+test('email obrigatório, válido, único; acesso é imposto no servidor e falha cria rollback', async () => {
+  cookie = ''; await login('admin@example.com');
+  const payload = { nome: 'Novo Entregador', endereco: 'Rua A' };
+  assert.equal((await mutate('POST', '/api/deliverers', payload)).response.status, 400);
+  assert.equal((await mutate('POST', '/api/deliverers', { ...payload, email: 'invalido' })).response.status, 400);
+  const duplicate = await mutate('POST', '/api/deliverers', { ...payload, email: ' ADMIN@example.com ' });
+  assert.equal(duplicate.response.status, 409);
+  const beforeUsers = users.length; const beforeDeliverers = records.length;
+  failDelivererInsert = true;
+  const failed = await mutate('POST', '/api/deliverers', { ...payload, email: 'rollback@example.com', acesso: 'administrador' });
+  failDelivererInsert = false;
+  assert.equal(failed.response.status, 500);
+  assert.equal(users.length, beforeUsers); assert.equal(records.length, beforeDeliverers);
+  const success = await mutate('POST', '/api/deliverers', { ...payload, email: 'novo@example.com', acesso: 'administrador' });
+  assert.equal(success.response.status, 201); assert.equal(success.body.entregador.acesso, 'entregador');
+  assert.equal(users.find((user) => user.id === success.body.entregador.usuario_id).acesso, 'entregador');
 });
 
 test('consulta, pesquisa, atualiza campos e trata IDs inválidos/inexistentes', async () => {
@@ -106,12 +137,14 @@ test('consulta, pesquisa, atualiza campos e trata IDs inválidos/inexistentes', 
   assert.equal((await request('/api/deliverers/abc')).response.status, 400);
   assert.equal((await request('/api/deliverers/999')).response.status, 404);
   assert.equal((await request('/api/deliverers?q=Maria')).body.length, 1);
-  const updated = await mutate('PATCH', '/api/deliverers/1', { numero: '22', quadra: 'Q9' });
+  const updated = await mutate('PATCH', '/api/deliverers/1', { email: 'maria@example.com', numero: '22', quadra: 'Q9' });
   assert.equal(updated.response.status, 200); assert.equal(updated.body.entregador.numero, '22'); assert.equal(updated.body.entregador.quadra, 'Q9');
-  const addressUpdate = await mutate('PATCH', '/api/deliverers/1', { cidade: 'Campinas', estado: 'mg' });
+  const addressUpdate = await mutate('PATCH', '/api/deliverers/1', { email: 'maria@example.com', cidade: 'Campinas', estado: 'mg' });
   assert.equal(addressUpdate.body.entregador.cidade, 'Campinas'); assert.equal(addressUpdate.body.entregador.estado, 'MG');
   assert.equal((await mutate('PATCH', '/api/deliverers/1', { cpf: '123' })).response.status, 400);
-  assert.equal((await mutate('PATCH', '/api/deliverers/1', { nome: 'Não permitido', acesso: 'administrador' })).response.status, 400);
+  const privilegeAttempt = await mutate('PATCH', '/api/deliverers/1', { email: 'maria@example.com', nome: 'Não permitido', acesso: 'administrador' });
+  assert.equal(privilegeAttempt.response.status, 200);
+  assert.equal(users.find((user) => user.id === privilegeAttempt.body.entregador.usuario_id).acesso, 'entregador');
 });
 
 test('exclusão exige sessão, valida ID, preserva referências e trata falhas do banco', async () => {

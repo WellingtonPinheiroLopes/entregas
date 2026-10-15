@@ -244,7 +244,9 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
   });
 
   const DELIVERER_FIELDS = ['nome', 'cpf', 'cidade', 'estado', 'cep', 'endereco', 'quadra', 'lote', 'numero', 'setor'];
-  const DELIVERER_COLUMNS = 'id, nome, cpf, cidade, estado, cep, endereco, quadra, lote, numero, setor, criado_em, atualizado_em';
+  const DELIVERER_COLUMNS = 'd.id, d.nome, d.cpf, d.cidade, d.estado, d.cep, d.endereco, d.quadra, d.lote, d.numero, d.setor, d.usuario_id, u.email, u.acesso, d.criado_em, d.atualizado_em';
+  const delivererSelect = `SELECT ${DELIVERER_COLUMNS} FROM entregadores d LEFT JOIN usuarios u ON u.id = d.usuario_id`;
+  const validEmail = (value) => typeof value === 'string' && value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
   const BRAZILIAN_STATES = new Set('AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' '));
   const validCpf = (cpf) => {
     if (!/^\d{11}$/.test(cpf) || /^([0-9])\1{10}$/.test(cpf)) return false;
@@ -257,9 +259,15 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
   };
   function parseDeliverer(body, partial = false) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return { error: 'Envie dados válidos do entregador.' };
-    if (Object.keys(body).some((key) => !DELIVERER_FIELDS.includes(key))) return { error: 'Envie somente os campos do cadastro de entregador.' };
+    if (Object.keys(body).some((key) => ![...DELIVERER_FIELDS, 'email', 'acesso'].includes(key))) return { error: 'Envie somente os campos do cadastro de entregador.' };
     if (partial && Object.keys(body).length === 0) return { error: 'Informe ao menos um campo para atualizar.' };
     const result = {};
+    if (!partial || Object.hasOwn(body, 'email')) {
+      const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+      if (!validEmail(email)) return { error: 'Informe um e-mail válido.' };
+      result.email = email;
+    }
+    // The access level is always assigned by the server; client values are ignored.
     for (const field of DELIVERER_FIELDS) {
       if (partial && !Object.hasOwn(body, field)) continue;
       let value = body[field];
@@ -303,8 +311,8 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
       const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
       const digits = query.replace(/\D/g, '');
       const [rows] = query
-        ? await db.execute(`SELECT ${DELIVERER_COLUMNS} FROM entregadores WHERE nome LIKE ? OR cpf LIKE ? ORDER BY id DESC`, [`%${query}%`, `%${digits || query}%`])
-        : await db.execute(`SELECT ${DELIVERER_COLUMNS} FROM entregadores ORDER BY id DESC`);
+        ? await db.execute(`${delivererSelect} WHERE d.nome LIKE ? OR d.cpf LIKE ? OR u.email LIKE ? ORDER BY d.id DESC`, [`%${query}%`, `%${digits || query}%`, `%${query}%`])
+        : await db.execute(`${delivererSelect} ORDER BY d.id DESC`);
       res.set('Cache-Control', 'no-store').json(rows);
     } catch (error) { next(error); }
   });
@@ -312,7 +320,7 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
   app.get('/api/deliverers/:id', authenticate, requireAccess('administrador'), async (req, res, next) => {
     if (!/^\d+$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id)) || Number(req.params.id) < 1) return res.status(400).json({ erro: 'Identificador inválido.' });
     try {
-      const [rows] = await db.execute(`SELECT ${DELIVERER_COLUMNS} FROM entregadores WHERE id = ? LIMIT 1`, [req.params.id]);
+      const [rows] = await db.execute(`${delivererSelect} WHERE d.id = ? LIMIT 1`, [req.params.id]);
       if (!rows[0]) return res.status(404).json({ erro: 'Entregador não encontrado.' });
       res.set('Cache-Control', 'no-store').json({ entregador: rows[0] });
     } catch (error) { next(error); }
@@ -322,12 +330,25 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
     const parsed = parseDeliverer(req.body);
     if (parsed.error) return res.status(400).json({ erro: parsed.error });
     try {
-      const fields = DELIVERER_FIELDS;
-      const [result] = await db.execute(`INSERT INTO entregadores (${fields.join(', ')}) VALUES (${fields.map(() => '?').join(', ')})`, fields.map((field) => parsed.value[field]));
-      const [rows] = await db.execute(`SELECT ${DELIVERER_COLUMNS} FROM entregadores WHERE id = ? LIMIT 1`, [result.insertId]);
-      res.status(201).json({ entregador: rows[0], mensagem: 'Entregador cadastrado com sucesso.' });
+      const connection = await db.getConnection();
+      let delivererId;
+      try {
+        await connection.beginTransaction();
+        const [existing] = await connection.execute('SELECT id FROM usuarios WHERE email = ? LIMIT 1 FOR UPDATE', [parsed.value.email]);
+        if (existing.length) { await connection.rollback(); return res.status(409).json({ erro: 'Este e-mail já está vinculado a uma conta do sistema.' }); }
+        const randomPassword = crypto.randomBytes(32).toString('base64url');
+        const passwordHash = await bcrypt.hash(randomPassword, 12);
+        const [userResult] = await connection.execute("INSERT INTO usuarios (nome, email, senha_hash, acesso) VALUES (?, ?, ?, 'entregador')", [parsed.value.nome, parsed.value.email, passwordHash]);
+        const fields = DELIVERER_FIELDS;
+        const [result] = await connection.execute(`INSERT INTO entregadores (usuario_id, ${fields.join(', ')}) VALUES (?, ${fields.map(() => '?').join(', ')})`, [userResult.insertId, ...fields.map((field) => parsed.value[field])]);
+        delivererId = result.insertId;
+        await connection.commit();
+      } catch (error) { await connection.rollback(); throw error; }
+      finally { connection.release(); }
+      const [rows] = await db.execute(`${delivererSelect} WHERE d.id = ? LIMIT 1`, [delivererId]);
+      res.status(201).json({ entregador: rows[0], mensagem: 'Entregador cadastrado. Defina uma senha na tela de usuários para habilitar o primeiro acesso.' });
     } catch (error) {
-      if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ erro: 'Já existe um entregador cadastrado com este CPF.' });
+      if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ erro: error.message.includes('email') ? 'Este e-mail já está vinculado a uma conta do sistema.' : 'Já existe um entregador cadastrado com este CPF.' });
       next(error);
     }
   });
@@ -337,16 +358,45 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
     const parsed = parseDeliverer(req.body, true);
     if (parsed.error) return res.status(400).json({ erro: parsed.error });
     try {
-      const fields = Object.keys(parsed.value);
-      const [result] = await db.execute(`UPDATE entregadores SET ${fields.map((field) => `${field} = ?`).join(', ')} WHERE id = ?`, [...fields.map((field) => parsed.value[field]), req.params.id]);
+      const connection = await db.getConnection();
+      let result;
+      try {
+        await connection.beginTransaction();
+        const [currentRows] = await connection.execute('SELECT id, usuario_id FROM entregadores WHERE id = ? LIMIT 1 FOR UPDATE', [req.params.id]);
+        if (!currentRows[0]) { await connection.rollback(); return res.status(404).json({ erro: 'Entregador não encontrado.' }); }
+        const current = currentRows[0];
+        if (!current.usuario_id && !parsed.value.email) { await connection.rollback(); return res.status(400).json({ erro: 'Informe um e-mail válido para vincular a conta deste entregador.' }); }
+        if (current.usuario_id && parsed.value.email) {
+          const [duplicates] = await connection.execute('SELECT id FROM usuarios WHERE email = ? AND id <> ? LIMIT 1', [parsed.value.email, current.usuario_id]);
+          if (duplicates.length) { await connection.rollback(); return res.status(409).json({ erro: 'Este e-mail já está vinculado a outra conta do sistema.' }); }
+        }
+        if (!current.usuario_id && parsed.value.email) {
+          const [duplicates] = await connection.execute('SELECT id FROM usuarios WHERE email = ? LIMIT 1', [parsed.value.email]);
+          if (duplicates.length) { await connection.rollback(); return res.status(409).json({ erro: 'Este e-mail já está vinculado a uma conta do sistema.' }); }
+          const [nameRows] = await connection.execute('SELECT nome FROM entregadores WHERE id = ? LIMIT 1', [req.params.id]);
+          const randomPassword = crypto.randomBytes(32).toString('base64url');
+          const passwordHash = await bcrypt.hash(randomPassword, 12);
+          const [userResult] = await connection.execute("INSERT INTO usuarios (nome, email, senha_hash, acesso) VALUES (?, ?, ?, 'entregador')", [parsed.value.nome || nameRows[0].nome, parsed.value.email, passwordHash]);
+          await connection.execute('UPDATE entregadores SET usuario_id = ? WHERE id = ?', [userResult.insertId, req.params.id]);
+        } else if (current.usuario_id && parsed.value.email) {
+          if (parsed.value.nome) await connection.execute('UPDATE usuarios SET nome = ?, email = ? WHERE id = ?', [parsed.value.nome, parsed.value.email, current.usuario_id]);
+          else await connection.execute('UPDATE usuarios SET email = ? WHERE id = ?', [parsed.value.email, current.usuario_id]);
+        } else if (current.usuario_id && parsed.value.nome) {
+          await connection.execute('UPDATE usuarios SET nome = ? WHERE id = ?', [parsed.value.nome, current.usuario_id]);
+        }
+        const fields = Object.keys(parsed.value).filter((field) => field !== 'email');
+        [result] = await connection.execute(`UPDATE entregadores SET ${fields.map((field) => `${field} = ?`).join(', ')} WHERE id = ?`, [...fields.map((field) => parsed.value[field]), req.params.id]);
+        await connection.commit();
+      } catch (error) { await connection.rollback(); throw error; }
+      finally { connection.release(); }
       if (!result.affectedRows) {
         const [existing] = await db.execute('SELECT id FROM entregadores WHERE id = ? LIMIT 1', [req.params.id]);
         if (!existing[0]) return res.status(404).json({ erro: 'Entregador não encontrado.' });
       }
-      const [rows] = await db.execute(`SELECT ${DELIVERER_COLUMNS} FROM entregadores WHERE id = ? LIMIT 1`, [req.params.id]);
+      const [rows] = await db.execute(`${delivererSelect} WHERE d.id = ? LIMIT 1`, [req.params.id]);
       res.json({ entregador: rows[0], mensagem: 'Entregador atualizado com sucesso.' });
     } catch (error) {
-      if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ erro: 'Já existe um entregador cadastrado com este CPF.' });
+      if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ erro: error.message.includes('usuarios_email') ? 'Este e-mail já está vinculado a outra conta do sistema.' : 'Já existe um entregador cadastrado com este CPF.' });
       next(error);
     }
   });
