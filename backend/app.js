@@ -415,6 +415,111 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
     }
   });
 
+  const CLIENT_FIELDS = ['nome', 'cpf', 'cep', 'endereco', 'quadra', 'lote', 'observacao'];
+  const CLIENT_SELECT = 'id, nome, cpf, cep, endereco, quadra, lote, observacao, criado_em, atualizado_em';
+  function parseClient(body, partial = false) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return { error: 'Envie dados válidos do cliente.' };
+    if (Object.keys(body).some((key) => !CLIENT_FIELDS.includes(key))) return { error: 'Envie somente os campos do cadastro de cliente.' };
+    if (partial && Object.keys(body).length === 0) return { error: 'Informe ao menos um campo para atualizar.' };
+    const value = {};
+    for (const field of CLIENT_FIELDS) {
+      if (partial && !Object.hasOwn(body, field)) continue;
+      const raw = body[field];
+      if (raw != null && typeof raw !== 'string') return { error: `O campo ${field} deve ser texto.` };
+      const input = typeof raw === 'string' ? raw.trim() : '';
+      if (field === 'nome') {
+        if (!input || input.length > 150) return { error: 'Informe o nome completo com até 150 caracteres.' };
+        value.nome = input;
+      } else if (field === 'cpf') {
+        if (!input) value.cpf = null;
+        else {
+          if (!/^[\d.\-\s]+$/.test(input)) return { error: 'Informe um CPF válido.' };
+          const cpf = input.replace(/\D/g, '');
+          if (!validCpf(cpf)) return { error: 'Informe um CPF válido.' };
+          value.cpf = cpf;
+        }
+      } else if (field === 'cep') {
+        if (!input) value.cep = null;
+        else {
+          if (!/^[\d\-\s]+$/.test(input)) return { error: 'Informe um CEP válido com 8 dígitos.' };
+          const cep = input.replace(/\D/g, '');
+          if (!/^\d{8}$/.test(cep)) return { error: 'Informe um CEP válido com 8 dígitos.' };
+          value.cep = cep;
+        }
+      } else {
+        const limits = { endereco: 255, quadra: 50, lote: 50, observacao: 5000 };
+        if (input.length > limits[field]) return { error: `O campo ${field} excede o limite permitido.` };
+        value[field] = input || null;
+      }
+    }
+    return { value };
+  }
+
+  app.get('/api/clients', authenticate, requireAccess('administrador'), async (req, res, next) => {
+    try {
+      const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+      const digits = query.replace(/\D/g, '');
+      const [rows] = query
+        ? await db.execute(`SELECT ${CLIENT_SELECT} FROM clientes WHERE nome LIKE ? OR cpf LIKE ? ORDER BY id DESC`, [`%${query}%`, `%${digits || query}%`])
+        : await db.execute(`SELECT ${CLIENT_SELECT} FROM clientes ORDER BY id DESC`);
+      res.set('Cache-Control', 'no-store').json(rows);
+    } catch (error) { next(error); }
+  });
+
+  app.get('/api/clients/:id', authenticate, requireAccess('administrador'), async (req, res, next) => {
+    if (!/^\d+$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id)) || Number(req.params.id) < 1) return res.status(400).json({ erro: 'Identificador inválido.' });
+    try {
+      const [rows] = await db.execute(`SELECT ${CLIENT_SELECT} FROM clientes WHERE id = ? LIMIT 1`, [req.params.id]);
+      if (!rows[0]) return res.status(404).json({ erro: 'Cliente não encontrado.' });
+      res.set('Cache-Control', 'no-store').json({ cliente: rows[0] });
+    } catch (error) { next(error); }
+  });
+
+  app.post('/api/clients', csrfGuard, authenticate, requireAccess('administrador'), async (req, res, next) => {
+    const parsed = parseClient(req.body);
+    if (parsed.error) return res.status(400).json({ erro: parsed.error });
+    try {
+      const fields = Object.keys(parsed.value);
+      const [result] = await db.execute(`INSERT INTO clientes (${fields.join(', ')}) VALUES (${fields.map(() => '?').join(', ')})`, fields.map((field) => parsed.value[field]));
+      const [rows] = await db.execute(`SELECT ${CLIENT_SELECT} FROM clientes WHERE id = ? LIMIT 1`, [result.insertId]);
+      res.status(201).json({ cliente: rows[0], mensagem: 'Cliente cadastrado com sucesso.' });
+    } catch (error) {
+      if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ erro: 'Já existe um cliente cadastrado com este CPF.' });
+      next(error);
+    }
+  });
+
+  app.patch('/api/clients/:id', csrfGuard, authenticate, requireAccess('administrador'), async (req, res, next) => {
+    if (!/^\d+$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id)) || Number(req.params.id) < 1) return res.status(400).json({ erro: 'Identificador inválido.' });
+    const parsed = parseClient(req.body, true);
+    if (parsed.error) return res.status(400).json({ erro: parsed.error });
+    try {
+      const fields = Object.keys(parsed.value);
+      const [result] = await db.execute(`UPDATE clientes SET ${fields.map((field) => `${field} = ?`).join(', ')} WHERE id = ?`, [...fields.map((field) => parsed.value[field]), req.params.id]);
+      if (!result.affectedRows) {
+        const [existing] = await db.execute('SELECT id FROM clientes WHERE id = ? LIMIT 1', [req.params.id]);
+        if (!existing[0]) return res.status(404).json({ erro: 'Cliente não encontrado.' });
+      }
+      const [rows] = await db.execute(`SELECT ${CLIENT_SELECT} FROM clientes WHERE id = ? LIMIT 1`, [req.params.id]);
+      res.json({ cliente: rows[0], mensagem: 'Cliente atualizado com sucesso.' });
+    } catch (error) {
+      if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ erro: 'Já existe um cliente cadastrado com este CPF.' });
+      next(error);
+    }
+  });
+
+  app.delete('/api/clients/:id', csrfGuard, authenticate, requireAccess('administrador'), async (req, res, next) => {
+    if (!/^\d+$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id)) || Number(req.params.id) < 1) return res.status(400).json({ erro: 'Identificador inválido.' });
+    try {
+      const [result] = await db.execute('DELETE FROM clientes WHERE id = ?', [req.params.id]);
+      if (!result.affectedRows) return res.status(404).json({ erro: 'Cliente não encontrado.' });
+      res.json({ mensagem: 'Cliente excluído com sucesso.' });
+    } catch (error) {
+      if (error.code === 'ER_ROW_IS_REFERENCED_2' || error.code === 'ER_ROW_IS_REFERENCED') return res.status(409).json({ erro: 'Este cliente possui registros relacionados e não pode ser excluído.' });
+      next(error);
+    }
+  });
+
   app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada.', caminho: req.path }));
   app.use((error, req, res, next) => {
     console.error('Erro interno:', error.code || 'erro inesperado');
