@@ -4,7 +4,7 @@ const digits = (value) => text(value).replace(/\D/g, '')
 export function formatDestinationAddress(delivery = {}) {
   const cepDigits = digits(delivery.cep_destino)
   const cep = cepDigits.length === 8 ? `${cepDigits.slice(0, 5)}-${cepDigits.slice(5)}` : text(delivery.cep_destino)
-  return [
+  return uniqueParts([
     delivery.endereco_destino,
     delivery.numero_destino,
     delivery.quadra_destino && `Quadra ${text(delivery.quadra_destino)}`,
@@ -13,56 +13,85 @@ export function formatDestinationAddress(delivery = {}) {
     delivery.cidade_destino,
     delivery.estado_destino,
     cep && `CEP ${cep}`,
-  ].map(text).filter(Boolean).join(', ')
+  ]).join(', ')
 }
 
-export function hasSufficientDestination(delivery = {}) {
+export function normalizeDestinationCep(value) {
+  return digits(value)
+}
+
+const comparisonKey = (value) => text(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR').replace(/[^a-z0-9]/g, '')
+
+function uniqueParts(parts) {
+  const seen = new Set()
+  return parts.map(text).filter((part) => {
+    if (!part) return false
+    const key = comparisonKey(part)
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+export function buildFallbackAddress(delivery = {}) {
+  const streetDetails = uniqueParts([
+    delivery.endereco_destino,
+    delivery.numero_destino && `Nº ${text(delivery.numero_destino)}`,
+    delivery.quadra_destino && `Quadra ${text(delivery.quadra_destino)}`,
+    delivery.lote_destino && `Lote ${text(delivery.lote_destino)}`,
+  ])
+  const streetKeys = new Set(streetDetails.map(comparisonKey))
+  const city = text(delivery.cidade_destino)
+  const state = text(delivery.estado_destino)
+  const sectorValue = text(delivery.setor_destino)
+  const sectorKey = comparisonKey(sectorValue)
+  const sector = sectorKey && !streetKeys.has(sectorKey) && sectorKey !== comparisonKey(city) && sectorKey !== comparisonKey(state) ? sectorValue : ''
+  const cityValue = comparisonKey(city) && !streetKeys.has(comparisonKey(city)) ? city : ''
+  const stateValue = comparisonKey(state) && !streetKeys.has(comparisonKey(state)) && comparisonKey(state) !== comparisonKey(cityValue) ? state : ''
+  const streetAndSector = [streetDetails.join(', '), sector].filter(Boolean).join(' - ')
+  const cityAndState = [cityValue, stateValue].filter(Boolean).join(' - ')
+  return [streetAndSector, cityAndState].filter(Boolean).join(', ')
+}
+
+export function buildDestinationQuery(delivery = {}) {
+  const cep = normalizeDestinationCep(delivery.cep_destino)
+  if (cep.length === 8) {
+    return uniqueParts([
+      `CEP ${cep}`,
+      delivery.cidade_destino,
+      delivery.estado_destino,
+      delivery.endereco_destino,
+      delivery.numero_destino && `Nº ${text(delivery.numero_destino)}`,
+      delivery.quadra_destino && `Quadra ${text(delivery.quadra_destino)}`,
+      delivery.lote_destino && `Lote ${text(delivery.lote_destino)}`,
+      delivery.setor_destino,
+    ]).join(', ')
+  }
+  return buildFallbackAddress(delivery)
+}
+
+export function hasSufficientFallbackAddress(delivery = {}) {
   const street = text(delivery.endereco_destino)
-  const locator = [delivery.numero_destino, delivery.quadra_destino, delivery.lote_destino, delivery.setor_destino, delivery.cidade_destino, delivery.estado_destino, delivery.cep_destino].some((part) => text(part))
-  const cepComplete = digits(delivery.cep_destino).length === 8
-  const cityAndState = text(delivery.cidade_destino) && text(delivery.estado_destino)
-  return Boolean((street && locator) || (cepComplete && (text(delivery.cidade_destino) || text(delivery.estado_destino))) || (cityAndState && (text(delivery.setor_destino) || text(delivery.quadra_destino) || text(delivery.lote_destino))))
+  const sector = text(delivery.setor_destino)
+  const city = text(delivery.cidade_destino)
+  return Boolean((street && (sector || city)) || (sector && city))
 }
 
 export function createNavigationLinks(delivery = {}) {
   const destination = formatDestinationAddress(delivery)
-  const googleParams = new URLSearchParams({ api: '1', destination, travelmode: 'driving', dir_action: 'navigate' })
-  const wazeParams = new URLSearchParams({ q: destination, navigate: 'yes' })
+  const isValidCep = normalizeDestinationCep(delivery.cep_destino).length === 8
+  const searchQuery = buildDestinationQuery(delivery)
+  const canNavigate = isValidCep || hasSufficientFallbackAddress(delivery)
+  if (!canNavigate || !searchQuery) return { destination, searchQuery, isValidCep, canNavigate: false, googleMaps: null, waze: null }
+  const googleParams = new URLSearchParams({ api: '1', destination: searchQuery, travelmode: 'driving', dir_action: 'navigate' })
+  // Waze documents q=search_terms for textual search; coordinates are deliberately omitted.
+  const wazeParams = new URLSearchParams({ q: searchQuery })
   return {
     destination,
-    isSufficient: hasSufficientDestination(delivery),
+    searchQuery,
+    isValidCep,
+    canNavigate: true,
     googleMaps: `https://www.google.com/maps/dir/?${googleParams.toString()}`,
     waze: `https://waze.com/ul?${wazeParams.toString()}`,
   }
-}
-
-export async function shareOrCopyDestination(address, { navigatorRef = globalThis.navigator, documentRef = globalThis.document } = {}) {
-  if (typeof navigatorRef?.share === 'function') {
-    try {
-      await navigatorRef.share({ title: 'Endereço de destino', text: address })
-      return 'shared'
-    } catch (error) {
-      if (error?.name === 'AbortError') throw error
-    }
-  }
-
-  if (typeof navigatorRef?.clipboard?.writeText === 'function') {
-    await navigatorRef.clipboard.writeText(address)
-    return 'copied'
-  }
-
-  if (documentRef?.body && typeof documentRef.execCommand === 'function') {
-    const textarea = documentRef.createElement('textarea')
-    textarea.value = address
-    textarea.setAttribute('readonly', '')
-    textarea.style.position = 'fixed'
-    textarea.style.opacity = '0'
-    documentRef.body.appendChild(textarea)
-    textarea.select()
-    const copied = documentRef.execCommand('copy')
-    documentRef.body.removeChild(textarea)
-    if (copied) return 'copied'
-  }
-
-  throw new Error('Não foi possível compartilhar nem copiar o endereço neste navegador.')
 }

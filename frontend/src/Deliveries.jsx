@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { missingClientAddressFields, populateDeliveryAddress, requiresClientAddressConfirmation } from './deliveryAddress.js'
-import { createNavigationLinks, shareOrCopyDestination } from './deliveryNavigation.js'
+import { createNavigationLinks } from './deliveryNavigation.js'
 import RecordSearch from './RecordSearch.jsx'
 
 const STATUS_LABELS = { na_farmacia: 'Na farmácia', em_transito: 'Em trânsito', concluida: 'Concluída', cancelada: 'Cancelada' }
@@ -35,8 +35,6 @@ export default function Deliveries({ api, csrfToken, onExpired, onDeliveryChange
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
   const [statusConfirmationOpen, setStatusConfirmationOpen] = useState(false)
   const [navigationOpen, setNavigationOpen] = useState(false)
-  const [navigationMessage, setNavigationMessage] = useState('')
-  const [navigationError, setNavigationError] = useState('')
   const [clientQuery, setClientQuery] = useState('')
   const [selectedClient, setSelectedClient] = useState(null)
   const [previousClient, setPreviousClient] = useState(null)
@@ -156,20 +154,10 @@ export default function Deliveries({ api, csrfToken, onExpired, onDeliveryChange
     finally { setSaving(false) }
   }
   async function openDetail(id) {
-    setDetailLoading(true); setError(''); setNavigationOpen(false); setNavigationMessage(''); setNavigationError('')
+    setDetailLoading(true); setError(''); setNavigationOpen(false)
     try { setDetail(await api(`/deliveries/${id}`)) }
     catch (requestError) { setError(requestError.message); if (/autenticação|sessão inválida/i.test(requestError.message)) onExpired() }
     finally { setDetailLoading(false) }
-  }
-  async function shareDestination() {
-    if (!detail) return
-    setNavigationMessage(''); setNavigationError('')
-    try {
-      const result = await shareOrCopyDestination(createNavigationLinks(detail.entrega).destination)
-      setNavigationMessage(result === 'shared' ? 'Endereço compartilhado.' : 'Endereço copiado. Cole-o no aplicativo de mapas desejado.')
-    } catch (shareError) {
-      if (shareError?.name !== 'AbortError') setNavigationError(shareError.message || 'Não foi possível compartilhar o endereço.')
-    }
   }
   async function updateStatus(status) {
     const deliveryId = detail?.entrega.id || selected?.id
@@ -248,8 +236,8 @@ export default function Deliveries({ api, csrfToken, onExpired, onDeliveryChange
     {(detail || detailLoading) && <div className="user-modal-backdrop" role="presentation"><section className="user-modal delivery-modal" role="dialog" aria-modal="true" aria-labelledby="delivery-detail-title"><header className="account-heading"><div><span className="section-label">ACOMPANHAMENTO</span><h2 id="delivery-detail-title">{detail ? `Entrega #${detail.entrega.id}` : 'Carregando entrega...'}</h2></div><button className="modal-close" type="button" aria-label="Fechar" onClick={() => { setDetail(null); setError('') }}>×</button></header>
       {detailLoading && <div className="account-loading"><span className="spinner" /> Carregando detalhes...</div>}{error && !cancelDialogOpen && <p className="error-message" role="alert">{error}</p>}
       {detail && <><div className="delivery-detail-grid"><div><span>Status</span><strong className={`delivery-status status-${detail.entrega.status}`}>{STATUS_LABELS[detail.entrega.status]}</strong></div><div><span>Cliente</span><strong>{detail.entrega.cliente_nome} · #{detail.entrega.cliente_id}</strong></div><div><span>Entregador</span><strong>{detail.entrega.entregador_nome} · #{detail.entrega.entregador_id}</strong></div><div><span>Criada em</span><strong>{displayDate(detail.entrega.criado_em)}</strong></div><div className="delivery-full-row"><span>Descrição</span><strong>{detail.entrega.descricao}</strong></div><div className="delivery-full-row"><span>Endereço de destino (snapshot)</span><strong>{addressSummary(detail.entrega)}{detail.entrega.cep_destino ? ` · CEP ${cepMask(detail.entrega.cep_destino)}` : ''}</strong></div>{detail.entrega.observacoes && <div className="delivery-full-row"><span>Observações</span><strong className="delivery-preserve-whitespace">{detail.entrega.observacoes}</strong></div>}{detail.entrega.motivo_cancelamento && <div className="delivery-full-row"><span>Motivo do cancelamento</span><strong className="delivery-preserve-whitespace">{detail.entrega.motivo_cancelamento}</strong></div>}</div>
-        <section className="delivery-navigation" aria-labelledby="delivery-navigation-title"><div className="delivery-navigation-main"><div><span className="section-label">ENDEREÇO DE DESTINO</span><h3 id="delivery-navigation-title">Navegação</h3><p>{navigation?.destination || 'Endereço não informado'}</p></div><button type="button" className="delivery-route-button" onClick={() => { setNavigationOpen((open) => !open); setNavigationMessage(''); setNavigationError('') }} aria-expanded={navigationOpen}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5 8.5 4l7 2.5L21 4v13.5L15.5 20l-7-2.5L3 20V6.5Z"/><path d="M8.5 4v13.5M15.5 6.5V20M12 9.2a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4Z"/><path d="M10.5 11.4 12 9l1.5 2.4L12 13l-1.5-1.6Z"/></svg>Traçar rota</button></div>
-          {navigationOpen && <div className="delivery-navigation-options" role="group" aria-label="Escolher aplicativo de navegação">{!navigation?.isSufficient ? <p className="delivery-navigation-warning" role="alert">Complete o endereço de destino da entrega antes de traçar a rota.</p> : <div className="delivery-navigation-links"><a className="delivery-navigation-link" href={navigation.googleMaps} target="_blank" rel="noopener noreferrer" onClick={() => setNavigationOpen(false)}>Google Maps <span aria-hidden="true">↗</span></a><a className="delivery-navigation-link" href={navigation.waze} target="_blank" rel="noopener noreferrer" onClick={() => setNavigationOpen(false)}>Waze <span aria-hidden="true">↗</span></a><button type="button" className="delivery-navigation-link" onClick={shareDestination}>Outro aplicativo <span aria-hidden="true">↗</span></button></div>}{navigationMessage && <p className="delivery-navigation-success" role="status">{navigationMessage}</p>}{navigationError && <p className="delivery-navigation-warning" role="alert">{navigationError}</p>}<button type="button" className="delivery-navigation-close" onClick={() => setNavigationOpen(false)}>Fechar opções</button></div>}
+        <section className="delivery-navigation" aria-labelledby="delivery-navigation-title"><div className="delivery-navigation-main"><div><span className="section-label">ENDEREÇO DE DESTINO</span><h3 id="delivery-navigation-title">Navegação</h3><p>{navigation?.destination || 'Endereço não informado'}</p></div><button type="button" className="delivery-route-button" onClick={() => setNavigationOpen((open) => !open)} aria-expanded={navigationOpen}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5 8.5 4l7 2.5L21 4v13.5L15.5 20l-7-2.5L3 20V6.5Z"/><path d="M8.5 4v13.5M15.5 6.5V20M12 9.2a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4Z"/><path d="M10.5 11.4 12 9l1.5 2.4L12 13l-1.5-1.6Z"/></svg>Traçar rota</button></div>
+          {navigationOpen && <div className="delivery-navigation-options" role="group" aria-label="Opções de navegação">{!navigation?.canNavigate ? <p className="delivery-navigation-warning" role="alert">Não há um CEP válido nem informações suficientes no endereço de destino. Corrija o CEP ou complete rua/bairro/cidade antes de traçar a rota.</p> : <><div className="delivery-navigation-links"><a className="delivery-navigation-link delivery-navigation-google" href={navigation.googleMaps} target="_blank" rel="noopener noreferrer" onClick={() => setNavigationOpen(false)}>Google Maps</a><a className="delivery-navigation-link delivery-navigation-waze" href={navigation.waze} target="_blank" rel="noopener noreferrer" onClick={() => setNavigationOpen(false)}>Waze</a></div><p className="delivery-navigation-hint">O Waze abrirá uma busca textual pelo CEP ou endereço. Como um CEP pode abranger um trecho ou uma área, o resultado pode não indicar a porta exata; os demais dados ajudam a refinar a busca.</p></>}<button type="button" className="delivery-navigation-close" onClick={() => setNavigationOpen(false)}>Fechar opções</button></div>}
         </section>
         {!terminal && <div className="delivery-detail-actions"><button type="button" className="secondary-button delivery-action-edit" disabled={actionBusy} onClick={editFromDetail}>Editar</button>{detail.entrega.status === 'em_transito' && <button type="button" className="secondary-button delivery-action-pharmacy" disabled={actionBusy} onClick={openReturnConfirmation}>Farmácia</button>}{detail.entrega.status === 'na_farmacia' && <button type="button" className="submit-button account-submit" disabled={actionBusy} onClick={() => updateStatus('em_transito')}>Em trânsito</button>}{detail.entrega.status === 'em_transito' && <button type="button" className="submit-button account-submit delivery-action-complete" disabled={actionBusy} onClick={() => updateStatus('concluida')}>Concluir</button>}<button type="button" className="danger-button delivery-action-cancel" disabled={actionBusy} onClick={openCancelDialog}>Cancelar</button></div>}
         <h3 className="delivery-history-title">Histórico de status</h3>{detail.historico.length ? <ol className="delivery-history">{detail.historico.map((entry) => <li key={entry.id}><strong>{STATUS_LABELS[entry.status_novo]}</strong><span>{entry.status_anterior ? `${STATUS_LABELS[entry.status_anterior]} → ` : 'Criada em '}{displayDate(entry.criado_em)}</span>{entry.usuario_nome && <small>Por {entry.usuario_nome}</small>}{entry.motivo && <small>Motivo: {entry.motivo}</small>}</li>)}</ol> : <p>Sem alterações registradas.</p>}</>}
