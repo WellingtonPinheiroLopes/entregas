@@ -6,6 +6,7 @@ import { canTraceDelivery } from './deliveryNavigation.js'
 const source = await readFile(new URL('./Deliveries.jsx', import.meta.url), 'utf8')
 const recordSearchSource = await readFile(new URL('./RecordSearch.jsx', import.meta.url), 'utf8')
 const backendSource = await readFile(new URL('../../backend/src/deliveries.js', import.meta.url), 'utf8')
+const styles = await readFile(new URL('./App.css', import.meta.url), 'utf8')
 
 test('clientes e entregadores exibem nomes sem IDs técnicos, mantendo IDs para seleção e gravação', () => {
   assert.doesNotMatch(recordSearchSource, /selected\.nome\} · #\$\{selected\.id\}/)
@@ -65,6 +66,9 @@ test('cadastro aceita entrega sem entregador e indica a atribuição pendente na
 test('entregador pode pedir conclusão apenas da própria entrega em trânsito com confirmação', () => {
   assert.match(source, /detail\.entrega\.status === 'em_transito' && \(isAdmin \|\| \(isDeliverer && detailMine\)\)/)
   assert.match(source, /isDeliverer \? openStatusConfirmation\('concluida'\) : updateStatus\('concluida'\)/)
+  assert.match(source, /delivery-action-complete" disabled=\{actionBusy\} onClick=\{\(\) => isDeliverer \? openStatusConfirmation\('concluida'\) : updateStatus\('concluida'\)\}>Concluir<\/button>/)
+  assert.match(styles, /\.delivery-detail-actions > button \{[^}]*min-height: 46px;[^}]*font-size: 13px;[^}]*font-weight: 700/)
+  assert.match(styles, /\.delivery-detail-actions \.delivery-action-complete[^}]*background: var\(--green-800\)/)
   assert.match(source, /Confirma que esta entrega foi realizada\?/)
   assert.match(source, /onDeliveryChange\(\)/)
   assert.match(source, /async function openDetail\(id\)/)
