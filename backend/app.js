@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const express = require('express');
 const session = require('express-session');
+const signature = require('cookie-signature');
 const bcrypt = require('bcrypt');
 const { rateLimit } = require('express-rate-limit');
 const MySQLSessionStore = require('./src/mysql-session-store');
@@ -22,6 +23,29 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
   app.disable('x-powered-by');
   if (secureCookie || process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
   app.use(express.json({ limit: '10kb' }));
+  // Browser cookies are shared by all tabs. A signed, tab-scoped credential
+  // selects the same server-side express-session store entry without relying
+  // on the browser's shared session cookie.
+  app.use((req, res, next) => {
+    const credential = req.get('x-tab-session');
+    if (credential === undefined) {
+      // In the browser application, never fall back to the shared cookie.
+      // Keep cookie compatibility for the existing isolated test clients.
+      if (!testing && req.headers.cookie) {
+        req.headers.cookie = req.headers.cookie.split(';').map((part) => part.trim())
+          .filter((part) => part && !part.startsWith('entregas.sid=')).join('; ');
+      }
+      return next();
+    }
+    if (typeof credential !== 'string' || credential.length > 512 || !signature.unsign(credential, sessionSecret)) {
+      return res.status(401).json({ erro: 'Sessão inválida.' });
+    }
+    const retainedCookies = (req.headers.cookie || '').split(';').map((part) => part.trim())
+      .filter((part) => part && !part.startsWith('entregas.sid='));
+    retainedCookies.push(`entregas.sid=${encodeURIComponent(`s:${credential}`)}`);
+    req.headers.cookie = retainedCookies.join('; ');
+    next();
+  });
   app.use(session({
     name: 'entregas.sid',
     secret: sessionSecret,
@@ -51,10 +75,12 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
     next();
   };
 
+  const sessionCredential = (req) => signature.sign(req.sessionID, sessionSecret);
+
   app.get('/api/auth/csrf', (req, res) => {
     req.session.csrfToken ||= crypto.randomBytes(32).toString('hex');
     res.set('Cache-Control', 'no-store');
-    res.json({ csrfToken: req.session.csrfToken });
+    res.json({ csrfToken: req.session.csrfToken, sessionCredential: sessionCredential(req) });
   });
 
   const loginLimiter = rateLimit({
@@ -94,7 +120,7 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
         req.session.save((saveError) => {
           if (saveError) return next(saveError);
           const { senha_hash, ...publicUser } = user;
-          res.set('Cache-Control', 'no-store').status(200).json({ usuario: publicUser, csrfToken: req.session.csrfToken });
+          res.set('Cache-Control', 'no-store').status(200).json({ usuario: publicUser, csrfToken: req.session.csrfToken, sessionCredential: sessionCredential(req) });
         });
       });
     } catch (error) {
@@ -123,7 +149,7 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
   app.locals.requireAccess = requireAccess;
 
   app.get('/api/auth/me', authenticate, (req, res) => {
-    res.set('Cache-Control', 'no-store').json({ usuario: req.user, csrfToken: req.session.csrfToken });
+    res.set('Cache-Control', 'no-store').json({ usuario: req.user, csrfToken: req.session.csrfToken, sessionCredential: sessionCredential(req) });
   });
 
   app.get('/api/account', authenticate, (req, res) => {

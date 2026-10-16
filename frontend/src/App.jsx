@@ -3,22 +3,40 @@ import Deliverers from './Deliverers.jsx'
 import Clients from './Clients.jsx'
 import Deliveries from './Deliveries.jsx'
 import DeliveryOverview from './DeliveryOverview.jsx'
+import { coordinateTabSession, getTabSessionCredential, setTabSessionCredential } from './tabSession.js'
 import './App.css'
+
+let startupCsrfRequest
+function startupCsrf() {
+  startupCsrfRequest ||= api('/auth/csrf')
+  return startupCsrfRequest
+}
 
 const api = async (path, options = {}) => {
   let response
+  const tabCredential = getTabSessionCredential()
   try {
     response = await fetch(`/api${path}`, {
       ...options,
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      // Authentication is sent in a tab-scoped header. Browser cookies are
+      // deliberately omitted because the same cookie jar is shared by tabs.
+      credentials: 'omit',
+      headers: { 'Content-Type': 'application/json', ...(tabCredential ? { 'X-Tab-Session': tabCredential } : {}), ...(options.headers || {}) },
     })
   } catch {
     throw new Error('Não foi possível conectar ao servidor. Verifique se a API está funcionando.')
   }
-  if (response.status === 204) return null
+  if (response.status === 204) {
+    if (path === '/auth/logout') setTabSessionCredential('')
+    return null
+  }
   const payload = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(payload.erro || 'Ocorreu um erro. Tente novamente.')
+  if (payload.sessionCredential) setTabSessionCredential(payload.sessionCredential)
+  if (!response.ok) {
+    if (response.status === 401 && path !== '/auth/login') setTabSessionCredential('')
+    throw new Error(payload.erro || 'Ocorreu um erro. Tente novamente.')
+  }
+  if (path === '/auth/logout' || path === '/account/password') setTabSessionCredential('')
   return payload
 }
 
@@ -201,8 +219,23 @@ export default function App() {
 
   useEffect(() => {
     let active = true
-    api('/auth/me').then(({ usuario, csrfToken: token }) => { if (active) { setUser(usuario); setCsrfToken(token || '') } }).catch(() => {}).finally(() => active && setChecking(false))
-    return () => { active = false }
+    let closeTabChannel = () => {}
+    ;(async () => {
+      try {
+        const initial = await startupCsrf()
+        if (!active) return
+        setCsrfToken(initial.csrfToken || '')
+        const coordinated = await coordinateTabSession(api, initial.csrfToken || '')
+        closeTabChannel = coordinated.close
+        if (!active) return
+        setCsrfToken(coordinated.csrfToken || '')
+        if (coordinated.forked) return
+        const { usuario, csrfToken: token } = await api('/auth/me')
+        if (active) { setUser(usuario); setCsrfToken(token || '') }
+      } catch { /* A missing or expired session leads to the login form. */ }
+      finally { if (active) setChecking(false) }
+    })()
+    return () => { active = false; closeTabChannel() }
   }, [])
 
   async function logout() {

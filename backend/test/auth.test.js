@@ -66,6 +66,34 @@ async function login(identifier = user.email, senha = 'senha-segura') {
   });
 }
 
+async function tabRequest(tab, path, options = {}) {
+  const headers = {
+    Origin: 'http://localhost:5173',
+    ...(tab.credential ? { 'X-Tab-Session': tab.credential } : {}),
+    ...(options.headers || {}),
+  };
+  const response = await fetch(`${baseUrl}${path}`, { ...options, headers });
+  const body = response.status === 204 ? null : await response.json();
+  return { response, body };
+}
+
+async function bootstrapTab(tab) {
+  const { body } = await tabRequest(tab, '/api/auth/csrf');
+  tab.credential = body.sessionCredential;
+  tab.csrfToken = body.csrfToken;
+}
+
+async function loginTab(tab, identifier) {
+  await bootstrapTab(tab);
+  const result = await tabRequest(tab, '/api/auth/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': tab.csrfToken },
+    body: JSON.stringify({ identificador: identifier, senha: 'senha-segura' }),
+  });
+  if (result.body.sessionCredential) tab.credential = result.body.sessionCredential;
+  if (result.body.csrfToken) tab.csrfToken = result.body.csrfToken;
+  return result;
+}
+
 before(async () => {
   process.env.LOGIN_RATE_LIMIT = '100';
   passwordHash = await bcrypt.hash('senha-segura', 4);
@@ -203,4 +231,97 @@ test('mutação sem token CSRF é bloqueada', async () => {
     body: JSON.stringify({ email: user.email, senha: 'senha-segura' })
   });
   assert.equal(response.status, 403);
+});
+
+test('sessões tab-scoped isolam identidades, permissões e logout; fork da guia duplicada é anônimo', async () => {
+  const tabA = {};
+  const adminLogin = await loginTab(tabA, admin.email);
+  assert.equal(adminLogin.response.status, 200);
+  assert.equal(adminLogin.body.usuario.acesso, 'administrador');
+
+  // A duplicate's client coordinator drops its copied tab credential and
+  // bootstraps an anonymous session, leaving the original server session intact.
+  const tabB = {};
+  await bootstrapTab(tabB);
+  assert.equal((await tabRequest(tabA, '/api/auth/me')).body.usuario.acesso, 'administrador');
+  const delivererLogin = await loginTab(tabB, deliverer.email);
+  assert.equal(delivererLogin.response.status, 200);
+  assert.equal(delivererLogin.body.usuario.acesso, 'entregador');
+  assert.notEqual(tabA.credential, tabB.credential);
+
+  assert.equal((await tabRequest(tabA, '/api/auth/me')).body.usuario.acesso, 'administrador');
+  assert.equal((await tabRequest(tabB, '/api/auth/me')).body.usuario.acesso, 'entregador');
+  assert.equal((await tabRequest(tabA, '/api/usuarios')).response.status, 200);
+  assert.equal((await tabRequest(tabB, '/api/usuarios')).response.status, 403);
+
+  const noCredential = await tabRequest({}, '/api/auth/me');
+  assert.equal(noCredential.response.status, 401);
+  const badOrigin = await tabRequest(tabB, '/api/auth/logout', {
+    method: 'POST', headers: { Origin: 'http://attacker.example', 'X-CSRF-Token': tabB.csrfToken },
+  });
+  assert.equal(badOrigin.response.status, 403);
+  const badCsrf = await tabRequest(tabB, '/api/auth/logout', { method: 'POST' });
+  assert.equal(badCsrf.response.status, 403);
+
+  const originalCredential = tabA.credential;
+  const logout = await tabRequest(tabA, '/api/auth/logout', {
+    method: 'POST', headers: { 'X-CSRF-Token': tabA.csrfToken },
+  });
+  assert.equal(logout.response.status, 204);
+  assert.equal((await tabRequest({ credential: originalCredential }, '/api/auth/me')).response.status, 401);
+  assert.equal((await tabRequest(tabB, '/api/auth/me')).body.usuario.id, deliverer.id);
+
+  const tampered = `${tabB.credential.slice(0, -1)}${tabB.credential.endsWith('a') ? 'b' : 'a'}`;
+  assert.equal((await tabRequest({ credential: tampered }, '/api/auth/me')).response.status, 401);
+});
+
+test('backend da aplicação ignora o cookie compartilhado e exige a credencial da guia', async (t) => {
+  const previousSecret = process.env.SESSION_SECRET;
+  const previousMaxAge = process.env.SESSION_MAX_AGE_MS;
+  process.env.SESSION_SECRET = 'production-like-session-secret-for-tests';
+  process.env.SESSION_MAX_AGE_MS = '250';
+  class ExpiringMemoryStore extends session.MemoryStore {
+    constructor() { super(); this.expirations = new Map(); }
+    get(sid, callback) {
+      if ((this.expirations.get(sid) || 0) <= Date.now()) return callback(null, null);
+      super.get(sid, callback);
+    }
+    set(sid, stored, callback) { this.expirations.set(sid, Date.now() + 250); super.set(sid, stored, callback); }
+    touch(sid, stored, callback) { this.expirations.set(sid, Date.now() + 250); super.touch(sid, stored, callback); }
+    destroy(sid, callback) { this.expirations.delete(sid); super.destroy(sid, callback); }
+  }
+  const app = createApp({ db, sessionStore: new ExpiringMemoryStore() });
+  const isolatedServer = app.listen(0, '127.0.0.1');
+  await new Promise((resolve) => isolatedServer.once('listening', resolve));
+  t.after(async () => {
+    await new Promise((resolve) => isolatedServer.close(resolve));
+    if (previousSecret === undefined) delete process.env.SESSION_SECRET;
+    else process.env.SESSION_SECRET = previousSecret;
+    if (previousMaxAge === undefined) delete process.env.SESSION_MAX_AGE_MS;
+    else process.env.SESSION_MAX_AGE_MS = previousMaxAge;
+  });
+
+  const url = `http://127.0.0.1:${isolatedServer.address().port}`;
+  const call = async (path, options = {}) => {
+    const response = await fetch(`${url}${path}`, options);
+    return { response, body: response.status === 204 ? null : await response.json() };
+  };
+  const bootstrap = await call('/api/auth/csrf', { headers: { Cookie: 'entregas.sid=shared-cookie-value' } });
+  assert.equal(bootstrap.response.status, 200);
+  const loggedIn = await call('/api/auth/login', {
+    method: 'POST', headers: { Origin: 'http://localhost:5173', 'Content-Type': 'application/json', 'X-Tab-Session': bootstrap.body.sessionCredential, 'X-CSRF-Token': bootstrap.body.csrfToken },
+    body: JSON.stringify({ identificador: admin.email, senha: 'senha-segura' }),
+  });
+  assert.equal(loggedIn.response.status, 200);
+  const sharedCookie = loggedIn.response.headers.get('set-cookie')?.split(';')[0];
+  assert.ok(sharedCookie);
+
+  const cookieOnly = await call('/api/auth/me', { headers: { Cookie: sharedCookie } });
+  assert.equal(cookieOnly.response.status, 401);
+  const selectedTab = await call('/api/auth/me', { headers: { Cookie: 'entregas.sid=some-other-tab', 'X-Tab-Session': loggedIn.body.sessionCredential } });
+  assert.equal(selectedTab.response.status, 200);
+  assert.equal(selectedTab.body.usuario.id, admin.id);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const expired = await call('/api/usuarios', { headers: { 'X-Tab-Session': loggedIn.body.sessionCredential } });
+  assert.equal(expired.response.status, 401);
 });
