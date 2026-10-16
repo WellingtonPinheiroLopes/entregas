@@ -62,10 +62,18 @@ test('cadastro aceita entrega sem entregador e indica a atribuição pendente na
   assert.match(source, /atribuida_a_mim/)
 })
 
+test('entregador pode pedir conclusão apenas da própria entrega em trânsito com confirmação', () => {
+  assert.match(source, /detail\.entrega\.status === 'em_transito' && \(isAdmin \|\| \(isDeliverer && detailMine\)\)/)
+  assert.match(source, /isDeliverer \? openStatusConfirmation\('concluida'\) : updateStatus\('concluida'\)/)
+  assert.match(source, /Confirma que esta entrega foi realizada\?/)
+  assert.match(source, /onDeliveryChange\(\)/)
+  assert.match(source, /async function openDetail\(id\)/)
+})
+
 test('ações cadastrais e de administração são ocultas para entregadores', () => {
   assert.match(source, /isAdmin && <button type="button" className="secondary-button delivery-action-edit"/)
   assert.match(source, /!terminal && \(isAdmin \|\| \(isDeliverer && detailMine\)\)/)
-  assert.match(source, /isAdmin && detail\.entrega\.status === 'em_transito' && <button type="button" className="submit-button account-submit delivery-action-complete"/)
+  assert.match(source, /detail\.entrega\.status === 'em_transito' && \(isAdmin \|\| \(isDeliverer && detailMine\)\) && <button type="button" className="submit-button account-submit delivery-action-complete"/)
   assert.match(source, /!detail\.entrega\.pre_visualizacao/)
   assert.match(source, /window\.setInterval\(refreshVisibleData, 30000\)/)
   assert.match(source, /window\.addEventListener\('focus', refreshVisibleData\)/)

@@ -254,7 +254,7 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
       try { ownId = await authenticatedDelivererId(req); }
       catch (error) { return next(error); }
       if (ownId === false) return res.status(403).json({ erro: 'A conta não está vinculada a um entregador.' });
-      if (body.status !== 'em_transito') return res.status(403).json({ erro: 'Ação não permitida para entregadores.' });
+      if (!['em_transito', 'concluida'].includes(body.status)) return res.status(403).json({ erro: 'Ação não permitida para entregadores.' });
     }
     let connection;
     try {
@@ -263,8 +263,9 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
       const [rows] = await connection.execute(lockSql, isDeliverer ? [req.params.id, ownId] : [req.params.id]);
       if (!rows[0]) { await connection.rollback(); return res.status(404).json({ erro: 'Entrega não encontrada.' }); }
       const current = rows[0].status; const next = body.status;
-      if (isDeliverer && current !== 'na_farmacia') { await connection.rollback(); return res.status(403).json({ erro: 'Esta entrega não pode ser colocada em trânsito.' }); }
-      const allowed = (current === 'na_farmacia' && next === 'em_transito') || (current === 'em_transito' && ['na_farmacia', 'concluida'].includes(next));
+      const allowed = isDeliverer
+        ? (current === 'na_farmacia' && next === 'em_transito') || (current === 'em_transito' && next === 'concluida')
+        : (current === 'na_farmacia' && next === 'em_transito') || (current === 'em_transito' && ['na_farmacia', 'concluida'].includes(next));
       if (!allowed) { await connection.rollback(); return res.status(409).json({ erro: 'Esta mudança de status não é permitida.' }); }
       await connection.execute('UPDATE entregas SET status = ? WHERE id = ?', [next, req.params.id]);
       await connection.execute('INSERT INTO historico_status_entregas (entrega_id, status_anterior, status_novo, usuario_id) VALUES (?, ?, ?, ?)', [req.params.id, current, next, req.user?.id || null]);

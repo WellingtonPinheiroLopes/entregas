@@ -294,8 +294,8 @@ test('entregador vê prévia da farmácia e somente os detalhes e ações das pr
   assert.equal((await mutate('PATCH', '/api/deliveries/3/status', { status: 'em_transito' })).response.status, 404);
   assert.equal((await mutate('POST', '/api/deliveries/3/cancel', { motivo: 'Não atribuída' })).response.status, 404);
   assert.equal((await mutate('PATCH', '/api/deliveries/1/status', { status: 'na_farmacia' })).response.status, 403);
-  assert.equal((await mutate('PATCH', '/api/deliveries/1/status', { status: 'concluida' })).response.status, 403);
-  assert.equal((await mutate('PATCH', '/api/deliveries/1/status', { status: 'em_transito' })).response.status, 403);
+  assert.equal((await mutate('PATCH', '/api/deliveries/5/status', { status: 'concluida' })).response.status, 409, 'não permite concluir enquanto está na farmácia');
+  assert.equal((await mutate('PATCH', '/api/deliveries/1/status', { status: 'em_transito' })).response.status, 409);
   assert.equal(deliveries[0].status, 'em_transito');
   deliveries[0].entregador_id = 202;
   assert.equal((await request('/api/deliveries/1')).response.status, 404);
@@ -321,8 +321,36 @@ test('entregador pode mover sua entrega da farmácia ao trânsito e cancelar com
   assert.equal(deliveries[1].status, 'cancelada');
   assert.equal(history.at(-1).motivo, 'Cliente ausente');
   assert.equal((await mutate('PATCH', '/api/deliveries/2/status', { status: 'na_farmacia' })).response.status, 403);
-  assert.equal((await mutate('PATCH', '/api/deliveries/3/status', { status: 'em_transito' })).response.status, 403);
+  assert.equal((await mutate('PATCH', '/api/deliveries/3/status', { status: 'em_transito' })).response.status, 409);
   assert.equal((await mutate('PATCH', '/api/deliveries/3', { descricao: 'Tentativa' })).response.status, 403);
+});
+
+test('entregador conclui somente a própria entrega em trânsito e contagens e histórico são atualizados', async () => {
+  await login('admin@example.com');
+  await createDelivery({ entregador_id: 201, descricao: 'Própria na farmácia' });
+  await createDelivery({ entregador_id: 201, descricao: 'Própria em trânsito' });
+  await createDelivery({ entregador_id: 202, descricao: 'De outro entregador' });
+  await createDelivery({ entregador_id: 201, descricao: 'Cancelar' });
+  await mutate('PATCH', '/api/deliveries/2/status', { status: 'em_transito' });
+  await mutate('PATCH', '/api/deliveries/3/status', { status: 'em_transito' });
+  await mutate('PATCH', '/api/deliveries/4/status', { status: 'em_transito' });
+  cookie = ''; await login('driver@example.com');
+
+  assert.equal((await mutate('PATCH', '/api/deliveries/1/status', { status: 'concluida' })).response.status, 409);
+  assert.equal((await mutate('PATCH', '/api/deliveries/3/status', { status: 'concluida' })).response.status, 404);
+  const completed = await mutate('PATCH', '/api/deliveries/2/status', { status: 'concluida' });
+  assert.equal(completed.response.status, 200);
+  assert.equal(completed.body.entrega.status, 'concluida');
+  assert.equal(history.at(-1).status_anterior, 'em_transito');
+  assert.equal(history.at(-1).status_novo, 'concluida');
+  assert.equal(history.at(-1).usuario_id, 3);
+  assert.equal((await mutate('PATCH', '/api/deliveries/2/status', { status: 'concluida' })).response.status, 409);
+
+  const summary = (await request('/api/deliveries/summary')).body;
+  assert.deepEqual(summary.statuses, { na_farmacia: 1, em_transito: 1, concluida: 1, cancelada: 0 });
+  cookie = ''; await login('driver2@example.com');
+  assert.deepEqual((await request('/api/deliveries/summary')).body.statuses, { na_farmacia: 0, em_transito: 1, concluida: 0, cancelada: 0 });
+  assert.equal((await request('/api/deliveries/2')).response.status, 404);
 });
 
 test('atribuição e desatribuição administrativa alteram imediatamente o escopo por entregador sem mudar status', async () => {
