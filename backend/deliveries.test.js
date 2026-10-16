@@ -25,26 +25,28 @@ const clone = (value) => structuredClone(value);
 const mockDb = {
   async execute(sql, params = []) {
     if (sql.startsWith('INSERT INTO notificacoes')) {
-      for (const user of users.filter((item) => item.acesso === 'entregador' && deliverers.some((entry) => String(entry.usuario_id) === String(item.id)))) {
+      const delivery = deliveries.find((item) => String(item.id) === String(params[3]));
+      for (const user of users.filter((item) => item.acesso === 'entregador' && deliverers.some((entry) => String(entry.usuario_id) === String(item.id)) && delivery?.status === 'na_farmacia' && delivery?.entregador_id == null)) {
         if (!notifications.some((item) => String(item.usuario_id) === String(user.id) && item.tipo === params[0] && String(item.entrega_id) === String(params[2]))) {
           notifications.push({ id: nextNotificationId++, usuario_id: user.id, tipo: params[0], mensagem: params[1], entrega_id: params[2], criado_em: '2026-10-15 10:00:00', lida_em: null });
         }
       }
       return [{ affectedRows: 2 }];
     }
-    if (sql.includes('FROM notificacoes WHERE usuario_id = ? ORDER BY')) return [[...notifications.filter((item) => String(item.usuario_id) === String(params[0])).sort((a, b) => b.id - a.id).slice(0, 50).map(({ id, tipo, mensagem, criado_em, lida_em }) => ({ id, tipo, mensagem, criado_em, lida_em }))]];
-    if (sql.includes('COUNT(*) AS total FROM notificacoes')) return [[{ total: notifications.filter((item) => String(item.usuario_id) === String(params[0]) && item.lida_em == null).length }]];
-    if (sql.startsWith('UPDATE notificacoes SET lida_em = CURRENT_TIMESTAMP WHERE usuario_id = ?')) {
-      const changed = notifications.filter((item) => String(item.usuario_id) === String(params[0]) && item.lida_em == null);
+    const isVisibleNotification = (item) => item.tipo !== 'nova_entrega' || deliveries.some((delivery) => String(delivery.id) === String(item.entrega_id) && delivery.entregador_id == null && delivery.status === 'na_farmacia');
+    if (sql.includes('FROM notificacoes n LEFT JOIN entregas d') && sql.includes('ORDER BY')) return [[...notifications.filter((item) => String(item.usuario_id) === String(params[0]) && isVisibleNotification(item)).sort((a, b) => b.id - a.id).slice(0, 50).map(({ id, tipo, mensagem, criado_em, lida_em }) => ({ id, tipo, mensagem, criado_em, lida_em }))]];
+    if (sql.includes('COUNT(*) AS total FROM notificacoes')) return [[{ total: notifications.filter((item) => String(item.usuario_id) === String(params[0]) && item.lida_em == null && isVisibleNotification(item)).length }]];
+    if (sql.startsWith('UPDATE notificacoes n LEFT JOIN entregas d') && sql.includes('n.usuario_id = ?') && !sql.includes('n.id = ?')) {
+      const changed = notifications.filter((item) => String(item.usuario_id) === String(params[0]) && item.lida_em == null && isVisibleNotification(item));
       changed.forEach((item) => { item.lida_em = '2026-10-15 11:00:00'; });
       return [{ affectedRows: changed.length }];
     }
-    if (sql.startsWith('UPDATE notificacoes SET lida_em = CURRENT_TIMESTAMP WHERE id = ? AND usuario_id = ?')) {
-      const item = notifications.find((entry) => String(entry.id) === String(params[0]) && String(entry.usuario_id) === String(params[1]) && entry.lida_em == null);
+    if (sql.startsWith('UPDATE notificacoes n LEFT JOIN entregas d') && sql.includes('n.id = ?')) {
+      const item = notifications.find((entry) => String(entry.id) === String(params[0]) && String(entry.usuario_id) === String(params[1]) && entry.lida_em == null && isVisibleNotification(entry));
       if (item) item.lida_em = '2026-10-15 11:00:00';
       return [{ affectedRows: item ? 1 : 0 }];
     }
-    if (sql.startsWith('SELECT id FROM notificacoes WHERE id = ? AND usuario_id = ?')) return [[...notifications.filter((item) => String(item.id) === String(params[0]) && String(item.usuario_id) === String(params[1])).map(({ id }) => ({ id }))]];
+    if (sql.includes('FROM notificacoes n LEFT JOIN entregas d') && sql.includes('n.id = ?')) return [[...notifications.filter((item) => String(item.id) === String(params[0]) && String(item.usuario_id) === String(params[1]) && isVisibleNotification(item)).map(({ id }) => ({ id }))]];
     if (sql.includes('FROM usuarios WHERE email')) return [[...users.filter((user) => user.email === params[0])]];
     if (sql.includes('FROM usuarios WHERE id')) return [[...users.filter((user) => String(user.id) === String(params[0]))]];
     if (sql.includes('FROM clientes WHERE id')) return [[...clients.filter((client) => String(client.id) === String(params[0]))]];
@@ -355,17 +357,17 @@ test('filtra datas, trata entrega inexistente e erro de banco sem expor detalhes
   assert.equal(failed.response.status, 500); assert.doesNotMatch(JSON.stringify(failed.body), /ECONNREFUSED|db offline/);
 });
 
-test('notifica todos os entregadores autorizados na criação, para entregas atribuídas e disponíveis', async () => {
+test('notifica todos os entregadores autorizados somente para entregas disponíveis na criação', async () => {
   await login('admin@example.com');
   assert.equal((await createDelivery({ entregador_id: 201 })).response.status, 201);
   assert.equal((await createDelivery({ entregador_id: null })).response.status, 201);
-  assert.equal(notifications.length, 4);
+  assert.equal(notifications.length, 2);
   for (const userId of [3, 4]) {
     const personal = notifications.filter((item) => item.usuario_id === userId);
-    assert.equal(personal.length, 2);
+    assert.equal(personal.length, 1);
     assert.ok(personal.every((item) => item.tipo === 'nova_entrega' && item.mensagem === 'Há uma nova entrega disponível.' && item.lida_em === null));
   }
-  assert.equal(notifications.filter((item) => item.entrega_id === 1).length, 2);
+  assert.equal(notifications.filter((item) => item.entrega_id === 1).length, 0);
   assert.equal(notifications.filter((item) => item.entrega_id === 2).length, 2);
   assert.equal((await request('/api/notifications')).body.notifications.length, 0, 'administrador não recebe a notificação específica de entregador');
 });
@@ -374,25 +376,52 @@ test('notificações são privadas por usuário, contador e leitura respeitam o 
   await login('admin@example.com'); await createDelivery({ entregador_id: 201 }); await createDelivery({ entregador_id: null });
   cookie = ''; await login('driver@example.com');
   let feed = await request('/api/notifications');
-  assert.equal(feed.response.status, 200); assert.equal(feed.body.unreadCount, 2); assert.equal(feed.body.notifications.length, 2);
+  assert.equal(feed.response.status, 200); assert.equal(feed.body.unreadCount, 1); assert.equal(feed.body.notifications.length, 1);
   assert.ok(feed.body.notifications.every((item) => item.mensagem === 'Há uma nova entrega disponível.' && !item.lida));
   assert.ok(feed.body.notifications.every((item) => !Object.hasOwn(item, 'entrega_id') && !Object.hasOwn(item, 'endereco_destino')));
-  assert.equal((await request('/api/notifications/unread-count')).body.count, 2);
+  assert.equal((await request('/api/notifications/unread-count')).body.count, 1);
   const first = feed.body.notifications[0].id;
-  const anotherOwnId = feed.body.notifications[1].id;
   assert.equal((await request(`/api/notifications/${first}/read`, { method: 'PATCH' })).response.status, 403, 'mutação exige CSRF');
   assert.equal((await mutate('PATCH', `/api/notifications/${first}/read`)).response.status, 200);
-  assert.equal((await request('/api/notifications/unread-count')).body.count, 1);
+  assert.equal((await request('/api/notifications/unread-count')).body.count, 0);
   cookie = ''; await login('driver2@example.com');
   const other = await request('/api/notifications');
-  assert.equal(other.body.notifications.length, 2); assert.equal(other.body.unreadCount, 2);
+  assert.equal(other.body.notifications.length, 1); assert.equal(other.body.unreadCount, 1);
   assert.equal((await mutate('PATCH', `/api/notifications/${first}/read`)).response.status, 404, 'não permite ler notificação alheia');
   const second = other.body.notifications[0].id;
   assert.equal((await mutate('PATCH', '/api/notifications/read-all')).response.status, 200);
   assert.equal((await request('/api/notifications/unread-count')).body.count, 0);
   assert.notEqual(notifications.find((item) => item.id === first).lida_em, null, 'a leitura feita pelo próprio usuário permanece');
-  assert.equal(notifications.find((item) => item.id === anotherOwnId).lida_em, null, 'a leitura do outro entregador não altera esta conta');
   assert.notEqual(notifications.find((item) => item.id === second).lida_em, null);
+});
+
+test('atribuir ou alterar o status remove disponibilidade e contador sem apagar histórico', async () => {
+  await login('admin@example.com'); await createDelivery({ entregador_id: null });
+  const original = notifications.length;
+  cookie = ''; await login('driver@example.com');
+  assert.equal((await request('/api/notifications/unread-count')).body.count, 1);
+  cookie = ''; await login('admin@example.com');
+  await mutate('PATCH', '/api/deliveries/1', { entregador_id: 201 });
+  cookie = ''; await login('driver2@example.com');
+  const feed = await request('/api/notifications');
+  assert.equal(feed.body.notifications.length, 0);
+  assert.equal(feed.body.unreadCount, 0);
+  assert.equal((await request('/api/notifications/unread-count')).body.count, 0);
+  assert.equal((await mutate('PATCH', `/api/notifications/${notifications.find((item) => item.usuario_id === 4).id}/read`)).response.status, 404);
+  assert.equal(notifications.length, original, 'o histórico original permanece');
+});
+
+test('entregas em trânsito, concluídas ou canceladas não aparecem como disponíveis', async () => {
+  await login('admin@example.com');
+  await createDelivery({ entregador_id: null }); await createDelivery({ entregador_id: null }); await createDelivery({ entregador_id: null });
+  await mutate('PATCH', '/api/deliveries/1/status', { status: 'em_transito' });
+  await mutate('PATCH', '/api/deliveries/2/status', { status: 'em_transito' });
+  await mutate('PATCH', '/api/deliveries/2/status', { status: 'concluida' });
+  await mutate('POST', '/api/deliveries/3/cancel', { motivo: 'Cancelamento de teste' });
+  cookie = ''; await login('driver@example.com');
+  assert.equal((await request('/api/notifications')).body.notifications.length, 0);
+  assert.equal((await request('/api/notifications/unread-count')).body.count, 0);
+  assert.equal(notifications.length, 6, 'histórico de notificações permanece no banco');
 });
 
 test('falhas e rollback da criação não deixam notificações ou entregas parciais; edição/status não notificam', async () => {
