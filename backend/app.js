@@ -271,9 +271,15 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
   };
   function parseDeliverer(body, partial = false) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return { error: 'Envie dados válidos do entregador.' };
-    if (Object.keys(body).some((key) => ![...DELIVERER_FIELDS, 'email', 'acesso'].includes(key))) return { error: 'Envie somente os campos do cadastro de entregador.' };
+    if (Object.keys(body).some((key) => ![...DELIVERER_FIELDS, 'email', 'acesso', 'senhaInicial'].includes(key))) return { error: 'Envie somente os campos do cadastro de entregador.' };
+    if (partial && Object.hasOwn(body, 'senhaInicial')) return { error: 'A senha inicial só pode ser definida no cadastro de um novo entregador.' };
     if (partial && Object.keys(body).length === 0) return { error: 'Informe ao menos um campo para atualizar.' };
     const result = {};
+    if (!partial) {
+      if (typeof body.senhaInicial !== 'string' || [...body.senhaInicial].length < 1 || [...body.senhaInicial].length > 10) return { error: 'A senha inicial deve ter de 1 a 10 caracteres.' };
+      if (Buffer.byteLength(body.senhaInicial, 'utf8') > 72) return { error: 'A senha inicial excede o limite permitido.' };
+      result.senhaInicial = body.senhaInicial;
+    }
     if (!partial || Object.hasOwn(body, 'email')) {
       const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
       if (!validEmail(email)) return { error: 'Informe um e-mail válido.' };
@@ -350,8 +356,7 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
         if (existing.length) { await connection.rollback(); return res.status(409).json({ erro: 'Este e-mail já está vinculado a uma conta do sistema.' }); }
         const [nameDuplicates] = await connection.execute('SELECT id FROM usuarios WHERE nome = ? LIMIT 1 FOR UPDATE', [parsed.value.nome]);
         if (nameDuplicates.length) { await connection.rollback(); return res.status(409).json({ erro: 'Já existe uma conta com este nome. Escolha um nome diferente para permitir o login.' }); }
-        const randomPassword = crypto.randomBytes(32).toString('base64url');
-        const passwordHash = await bcrypt.hash(randomPassword, 12);
+        const passwordHash = await bcrypt.hash(parsed.value.senhaInicial, 12);
         const [userResult] = await connection.execute("INSERT INTO usuarios (nome, email, senha_hash, acesso) VALUES (?, ?, ?, 'entregador')", [parsed.value.nome, parsed.value.email, passwordHash]);
         const fields = DELIVERER_FIELDS;
         const [result] = await connection.execute(`INSERT INTO entregadores (usuario_id, ${fields.join(', ')}) VALUES (?, ${fields.map(() => '?').join(', ')})`, [userResult.insertId, ...fields.map((field) => parsed.value[field])]);
@@ -360,7 +365,7 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
       } catch (error) { await connection.rollback(); throw error; }
       finally { connection.release(); }
       const [rows] = await db.execute(`${delivererSelect} WHERE d.id = ? LIMIT 1`, [delivererId]);
-      res.status(201).json({ entregador: rows[0], mensagem: 'Entregador cadastrado. Defina uma senha na tela de usuários para habilitar o primeiro acesso.' });
+      res.status(201).json({ entregador: rows[0], mensagem: 'Entregador cadastrado com acesso habilitado.' });
     } catch (error) {
       if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ erro: error.message.includes('email') ? 'Este e-mail já está vinculado a uma conta do sistema.' : 'Já existe um entregador cadastrado com este CPF.' });
       next(error);

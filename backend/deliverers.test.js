@@ -20,6 +20,7 @@ const db = {
   async execute(sql, params = []) {
     if (sql.includes('FROM usuarios WHERE email') && sql.includes('id <>')) return [[...users.filter((user) => user.email.toLowerCase() === String(params[0]).toLowerCase() && String(user.id) !== String(params[1]))]];
     if (sql.includes('FROM usuarios WHERE email')) return [[...users.filter((user) => user.email.toLowerCase() === String(params[0]).toLowerCase())]];
+    if (sql.includes('FROM usuarios WHERE nome')) return [[...users.filter((user) => user.nome === String(params[0]))]];
     if (sql.startsWith('INSERT INTO usuarios')) { const row = { id: nextUserId++, nome: params[0], email: params[1], senha_hash: params[2], acesso: 'entregador' }; users.push(row); return [{ insertId: row.id }]; }
     if (sql.startsWith('UPDATE usuarios SET nome = ?, email = ?')) { const row = users.find((user) => String(user.id) === String(params[2])); if (row) { row.nome = params[0]; row.email = params[1]; } return [{ affectedRows: row ? 1 : 0 }]; }
     if (sql.startsWith('UPDATE usuarios SET email = ?')) { const row = users.find((user) => String(user.id) === String(params[1])); if (row) row.email = params[0]; return [{ affectedRows: row ? 1 : 0 }]; }
@@ -68,9 +69,9 @@ async function request(path, options = {}) {
   const setCookie = response.headers.get('set-cookie'); if (setCookie) cookie = setCookie.split(';')[0];
   return { response, body: response.status === 204 ? null : await response.json() };
 }
-async function login(email) {
+async function login(email, senha) {
   const token = (await request('/api/auth/csrf')).body.csrfToken;
-  return request('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token }, body: JSON.stringify({ email, senha: email.startsWith('admin') ? 'admin-password' : 'guest-password' }) });
+  return request('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token }, body: JSON.stringify({ identificador: email, senha: senha || (email.startsWith('admin') ? 'admin-password' : 'guest-password') }) });
 }
 async function mutate(method, path, payload) {
   const token = (await request('/api/auth/me')).body.csrfToken;
@@ -94,7 +95,7 @@ test('endpoints de entregadores exigem autenticação administrativa', async () 
 
 test('valida entrada, CPF e normaliza strings ao cadastrar', async () => {
   cookie = ''; await login('admin@example.com');
-  const valid = { nome: '  Maria Silva  ', email: '  MARIa@Example.com ', cpf: '529.982.247-25', cidade: 'São Paulo', estado: 'sp', cep: '01001-000', endereco: 'Rua Direita', quadra: 'Q2', lote: 'L4', numero: '15', setor: 'Centro' };
+  const valid = { nome: '  Maria Silva  ', email: '  MARIa@Example.com ', senhaInicial: 'primeiro1', cpf: '529.982.247-25', cidade: 'São Paulo', estado: 'sp', cep: '01001-000', endereco: 'Rua Direita', quadra: 'Q2', lote: 'L4', numero: '15', setor: 'Centro' };
   assert.equal((await mutate('POST', '/api/deliverers', { ...valid, nome: ' ' })).response.status, 400);
   assert.equal((await mutate('POST', '/api/deliverers', { ...valid, endereco: '' })).response.status, 400);
   assert.equal((await mutate('POST', '/api/deliverers', { ...valid, cpf: 'abc' })).response.status, 400);
@@ -106,10 +107,16 @@ test('valida entrada, CPF e normaliza strings ao cadastrar', async () => {
   assert.equal(created.response.status, 201); assert.equal(created.body.entregador.nome, 'Maria Silva'); assert.equal(created.body.entregador.email, 'maria@example.com'); assert.equal(created.body.entregador.acesso, 'entregador'); assert.equal(users.find((user) => user.id === created.body.entregador.usuario_id).acesso, 'entregador');
   assert.equal(created.body.entregador.cpf, '52998224725'); assert.equal(created.body.entregador.cep, '01001000');
   assert.equal(created.body.entregador.cidade, 'São Paulo'); assert.equal(created.body.entregador.estado, 'SP');
+  const maria = users.find((user) => user.id === created.body.entregador.usuario_id);
+  assert.match(maria.senha_hash, /^\$2[aby]\$/); assert.equal(await bcrypt.compare('primeiro1', maria.senha_hash), true);
+  assert.equal(JSON.stringify(created.body).includes('primeiro1'), false);
+  cookie = ''; assert.equal((await login('maria@example.com', 'primeiro1')).response.status, 200);
+  cookie = ''; assert.equal((await login('Maria Silva', 'primeiro1')).response.status, 200);
+  cookie = ''; await login('admin@example.com');
   assert.equal((await mutate('POST', '/api/deliverers', valid)).response.status, 409);
   const withoutCpf = await mutate('POST', '/api/deliverers', { ...valid, nome: 'Sem CPF', email: 'semcpf@example.com', cpf: '' });
   assert.equal(withoutCpf.response.status, 201); assert.equal(withoutCpf.body.entregador.cpf, null);
-  const manual = await mutate('POST', '/api/deliverers', { nome: 'Cadastro manual', email: 'manual@example.com', endereco: 'Rua sem consulta' });
+  const manual = await mutate('POST', '/api/deliverers', { nome: 'Cadastro manual', email: 'manual@example.com', senhaInicial: 'm', endereco: 'Rua sem consulta' });
   assert.equal(manual.response.status, 201); assert.equal(manual.body.entregador.cidade, null); assert.equal(manual.body.entregador.estado, null);
 });
 
@@ -118,17 +125,25 @@ test('email obrigatório, válido, único; acesso é imposto no servidor e falha
   const payload = { nome: 'Novo Entregador', endereco: 'Rua A' };
   assert.equal((await mutate('POST', '/api/deliverers', payload)).response.status, 400);
   assert.equal((await mutate('POST', '/api/deliverers', { ...payload, email: 'invalido' })).response.status, 400);
-  const duplicate = await mutate('POST', '/api/deliverers', { ...payload, email: ' ADMIN@example.com ' });
+  assert.equal((await mutate('POST', '/api/deliverers', { ...payload, email: 'sem-senha@example.com' })).response.status, 400);
+  assert.equal((await mutate('POST', '/api/deliverers', { ...payload, email: 'curta@example.com', senhaInicial: '' })).response.status, 400);
+  assert.equal((await mutate('POST', '/api/deliverers', { ...payload, email: 'longa@example.com', senhaInicial: '12345678901' })).response.status, 400);
+  const duplicate = await mutate('POST', '/api/deliverers', { ...payload, email: ' ADMIN@example.com ', senhaInicial: 'primeiro1' });
   assert.equal(duplicate.response.status, 409);
   const beforeUsers = users.length; const beforeDeliverers = records.length;
   failDelivererInsert = true;
-  const failed = await mutate('POST', '/api/deliverers', { ...payload, email: 'rollback@example.com', acesso: 'administrador' });
+  const failed = await mutate('POST', '/api/deliverers', { ...payload, email: 'rollback@example.com', senhaInicial: 'primeiro1', acesso: 'administrador' });
   failDelivererInsert = false;
   assert.equal(failed.response.status, 500);
   assert.equal(users.length, beforeUsers); assert.equal(records.length, beforeDeliverers);
-  const success = await mutate('POST', '/api/deliverers', { ...payload, email: 'novo@example.com', acesso: 'administrador' });
+  const success = await mutate('POST', '/api/deliverers', { ...payload, email: 'novo@example.com', senhaInicial: 'primeiro1', acesso: 'administrador' });
   assert.equal(success.response.status, 201); assert.equal(success.body.entregador.acesso, 'entregador');
   assert.equal(users.find((user) => user.id === success.body.entregador.usuario_id).acesso, 'entregador');
+  const passwordBeforeEdit = users.find((user) => user.id === success.body.entregador.usuario_id).senha_hash;
+  const edit = await mutate('PATCH', `/api/deliverers/${success.body.entregador.id}`, { numero: '10' });
+  assert.equal(edit.response.status, 200);
+  assert.equal(users.find((user) => user.id === success.body.entregador.usuario_id).senha_hash, passwordBeforeEdit);
+  assert.equal((await mutate('PATCH', `/api/deliverers/${success.body.entregador.id}`, { senhaInicial: 'troca' })).response.status, 400);
 });
 
 test('consulta, pesquisa, atualiza campos e trata IDs inválidos/inexistentes', async () => {

@@ -13,6 +13,8 @@ export default function Deliverers({ api, csrfToken, onExpired }) {
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
   const [form, setForm] = useState(emptyForm)
+  const [senhaInicial, setSenhaInicial] = useState('')
+  const [showInitialPassword, setShowInitialPassword] = useState(false)
   const [selected, setSelected] = useState(null)
   const [saving, setSaving] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
@@ -56,24 +58,25 @@ export default function Deliverers({ api, csrfToken, onExpired }) {
     }, 250)
     return () => { clearTimeout(timer); controller.abort() }
   }, [form.cep])
-  function startNew() { setFormOpen(true); setSelected(null); setForm({ ...emptyForm }); setError(''); setNotice(''); setCepMessage('') }
-  function closeForm() { setFormOpen(false); setSelected(null); setForm({ ...emptyForm }); setError(''); setCepMessage('') }
+  function startNew() { setFormOpen(true); setSelected(null); setForm({ ...emptyForm }); setSenhaInicial(''); setShowInitialPassword(false); setError(''); setNotice(''); setCepMessage('') }
+  function closeForm() { setFormOpen(false); setSelected(null); setForm({ ...emptyForm }); setSenhaInicial(''); setShowInitialPassword(false); setError(''); setCepMessage('') }
   function startEdit(item) { setFormOpen(true); setSelected(item); setForm(Object.fromEntries(Object.keys(emptyForm).map((key) => [key, item[key] || '']))); setError(''); setNotice(''); setCepMessage('') }
   async function save(event) {
     event.preventDefault(); setError(''); setNotice('')
     if (!form.nome.trim()) { setError('Informe o nome completo.'); return }
+    if (!selected && ([...senhaInicial].length < 1 || [...senhaInicial].length > 10)) { setError('A senha inicial deve ter de 1 a 10 caracteres.'); return }
     const email = form.email.trim().toLowerCase()
     if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError('Informe um e-mail válido.'); return }
     if (!form.endereco.trim()) { setError('Informe o endereço ou logradouro.'); return }
     if (form.cidade.trim().length > 100) { setError('A cidade deve ter até 100 caracteres.'); return }
     if (form.estado.trim() && !states.includes(form.estado.trim().toUpperCase())) { setError('Informe uma UF brasileira válida.'); return }
     if (digits(form.cpf).length && digits(form.cpf).length !== 11) { setError('Informe um CPF com 11 dígitos.'); return }
-    const payload = { ...form, email, cpf: digits(form.cpf) || null, cep: digits(form.cep) || null }
+    const payload = { ...form, email, cpf: digits(form.cpf) || null, cep: digits(form.cep) || null, ...(!selected ? { senhaInicial } : {}) }
     setSaving(true)
     try {
       const path = selected ? `/deliverers/${selected.id}` : '/deliverers'
       const result = await api(path, { method: selected ? 'PATCH' : 'POST', headers: { 'X-CSRF-Token': csrfToken }, body: JSON.stringify(payload) })
-      setNotice(result.mensagem); setSelected(null); setFormOpen(false); setForm({ ...emptyForm }); await refresh(query)
+      setNotice(result.mensagem); setSelected(null); setFormOpen(false); setForm({ ...emptyForm }); setSenhaInicial(''); await refresh(query)
     } catch (requestError) { setError(requestError.message); if (/autenticação|sessão inválida/i.test(requestError.message)) onExpired() }
     finally { setSaving(false) }
   }
@@ -103,7 +106,7 @@ export default function Deliverers({ api, csrfToken, onExpired }) {
     {formOpen && <div className="user-modal-backdrop" role="presentation"><section className="user-modal deliverer-modal" role="dialog" aria-modal="true" aria-labelledby="deliverer-form-title"><header className="account-heading"><div><span className="section-label">DADOS DO ENTREGADOR</span><h2 id="deliverer-form-title">{selected ? 'Consultar / editar cadastro' : 'Novo entregador'}</h2><p>Campos marcados com * são obrigatórios.</p></div><button className="modal-close" type="button" aria-label="Fechar" onClick={closeForm}>×</button></header>
       <form onSubmit={save} noValidate><div className="deliverer-fields">
         <label className="account-field">Nome completo *<input autoComplete="name" maxLength={150} required value={form.nome} onChange={(event) => setForm({ ...form, nome: event.target.value })} /></label>
-        <label className="account-field">E-mail *<input type="email" autoComplete="email" maxLength={254} required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label>{!selected && <label className="account-field">Perfil de acesso<input value="Entregador" readOnly aria-readonly="true" /></label>}
+        <label className="account-field">E-mail *<input type="email" autoComplete="email" maxLength={254} required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label>{!selected && <><label className="account-field">Perfil de acesso<input value="Entregador" readOnly aria-readonly="true" /></label><label className="account-field">Senha inicial *<span className="password-wrap"><input type={showInitialPassword ? 'text' : 'password'} autoComplete="new-password" maxLength={10} required value={senhaInicial} onChange={(event) => setSenhaInicial(event.target.value)} aria-describedby="initial-password-help" /><button className="show-password" type="button" aria-label={showInitialPassword ? 'Ocultar senha inicial' : 'Mostrar senha inicial'} onClick={() => setShowInitialPassword((visible) => !visible)}>{showInitialPassword ? 'Ocultar' : 'Mostrar'}</button></span><small id="initial-password-help">Use de 1 a 10 caracteres. Esta senha será usada no primeiro acesso.</small></label></>}
         <label className="account-field">CPF (opcional)<input inputMode="numeric" autoComplete="off" placeholder="000.000.000-00" value={cpfMask(form.cpf)} onChange={(event) => setForm({ ...form, cpf: cpfMask(event.target.value) })} /></label>
         <label className="account-field">CEP<input inputMode="numeric" autoComplete="postal-code" placeholder="00000-000" value={cepMask(form.cep)} onChange={(event) => setForm({ ...form, cep: cepMask(event.target.value) })} />{cepLoading && <small><span className="spinner" /> Consultando CEP...</small>}{cepMessage && <small role="status">{cepMessage}</small>}</label>
         <label className="account-field">Rua / Logradouro *<input autoComplete="address-line1" maxLength={255} required value={form.endereco} onChange={(event) => setForm({ ...form, endereco: event.target.value })} /></label>
