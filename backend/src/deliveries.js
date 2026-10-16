@@ -61,13 +61,10 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
     return rows[0]?.id ?? false;
   }
 
-  function limitedPharmacyDelivery(row, ownId) {
+  function limitedPharmacyDelivery(row) {
     return {
-      id: row.id, status: row.status, cliente_id: row.cliente_id, cliente_nome: row.cliente_nome,
-      descricao: row.descricao, cep_destino: row.cep_destino, endereco_destino: row.endereco_destino,
-      quadra_destino: row.quadra_destino, lote_destino: row.lote_destino, numero_destino: row.numero_destino,
-      setor_destino: row.setor_destino, cidade_destino: row.cidade_destino, estado_destino: row.estado_destino,
-      criado_em: row.criado_em, atribuida_a_mim: String(row.entregador_id) === String(ownId),
+      id: row.id, status: row.status, descricao: row.descricao, criado_em: row.criado_em,
+      atribuida_a_mim: false, pre_visualizacao: true,
     };
   }
 
@@ -86,7 +83,8 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
         const ownId = await authenticatedDelivererId(req);
         if (ownId === false) return res.status(403).json({ erro: 'A conta não está vinculada a um entregador.' });
         const [rows] = await db.execute(`SELECT status, COUNT(*) AS total FROM entregas
-          WHERE status = 'na_farmacia' OR (entregador_id = ? AND status IN ('em_transito', 'concluida', 'cancelada')) GROUP BY status`, [ownId]);
+          WHERE (status = 'na_farmacia' AND entregador_id IS NULL)
+            OR (entregador_id = ? AND status IN ('em_transito', 'concluida', 'cancelada')) GROUP BY status`, [ownId]);
         for (const row of rows) if (Object.hasOwn(totals, row.status)) totals[row.status] = Number(row.total);
       }
       res.set('Cache-Control', 'no-store').json({ total: Object.values(totals).reduce((sum, amount) => sum + amount, 0), statuses: totals, labels: STATUS_LABELS });
@@ -117,10 +115,25 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
       if (ownId === false) return res.status(403).json({ erro: 'A conta não está vinculada a um entregador.' });
       if (isDeliverer && (cliente_id !== undefined || entregador_id !== undefined || de !== undefined || ate !== undefined)) return res.status(403).json({ erro: 'Filtro não permitido.' });
       const where = filters.length ? ` WHERE ${filters.join(' AND ')}` : '';
-      const driverWhere = isDeliverer ? ` WHERE (e.status = 'na_farmacia' OR e.entregador_id = ?)${status ? ' AND e.status = ?' : ''}${q?.trim() ? ' AND (e.descricao LIKE ? OR c.nome LIKE ?)' : ''}` : where;
-      const driverValues = isDeliverer ? [ownId, ...(status ? [status] : []), ...(q?.trim() ? [`%${q.trim()}%`, `%${q.trim()}%`] : [])] : values;
-      const [rows] = await db.execute(`${DELIVERY_SELECT}${isDeliverer ? driverWhere : where} ORDER BY e.criado_em DESC, e.id DESC`, isDeliverer ? driverValues : values);
-      const visible = isDeliverer ? rows.filter((row) => row.status === 'na_farmacia' || String(row.entregador_id) === String(ownId)).map((row) => row.status === 'na_farmacia' ? limitedPharmacyDelivery(row, ownId) : { ...ownDelivery(row), atribuida_a_mim: true }) : rows;
+      if (!isDeliverer) {
+        const [rows] = await db.execute(`${DELIVERY_SELECT}${where} ORDER BY e.criado_em DESC, e.id DESC`, values);
+        return res.set('Cache-Control', 'no-store').json(rows);
+      }
+
+      const assignedFilters = ['e.entregador_id = ?']; const assignedValues = [ownId];
+      if (status !== undefined) { assignedFilters.push('e.status = ?'); assignedValues.push(status); }
+      if (typeof q === 'string' && q.trim()) { assignedFilters.push('(e.descricao LIKE ? OR c.nome LIKE ?)'); assignedValues.push(`%${q.trim()}%`, `%${q.trim()}%`); }
+      const availableFilters = ["status = 'na_farmacia'", 'entregador_id IS NULL']; const availableValues = [];
+      if (status !== undefined && status !== 'na_farmacia') availableFilters.push('1 = 0');
+      if (typeof q === 'string' && q.trim()) { availableFilters.push('descricao LIKE ?'); availableValues.push(`%${q.trim()}%`); }
+      const [[assignedRows], [availableRows]] = await Promise.all([
+        db.execute(`${DELIVERY_SELECT} WHERE ${assignedFilters.join(' AND ')} ORDER BY e.criado_em DESC, e.id DESC`, assignedValues),
+        db.execute(`SELECT id, status, descricao, criado_em FROM entregas WHERE ${availableFilters.join(' AND ')} ORDER BY criado_em DESC, id DESC`, availableValues),
+      ]);
+      const visible = [
+        ...assignedRows.map((row) => ({ ...ownDelivery(row), atribuida_a_mim: true })),
+        ...availableRows.map((row) => limitedPharmacyDelivery(row)),
+      ].sort((a, b) => new Date(b.criado_em).valueOf() - new Date(a.criado_em).valueOf() || Number(b.id) - Number(a.id));
       res.set('Cache-Control', 'no-store').json(visible);
     } catch (error) { next(error); }
   });
@@ -128,18 +141,21 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
   app.get('/api/deliveries/:id', authenticate, adminOrDeliverer, async (req, res, next) => {
     if (!validId(req.params.id)) return res.status(400).json({ erro: 'Identificador inválido.' });
     try {
-      const [rows] = await db.execute(`${DELIVERY_SELECT} WHERE e.id = ? LIMIT 1`, [req.params.id]);
-      if (!rows[0]) return res.status(404).json({ erro: 'Entrega não encontrada.' });
       const isDeliverer = req.user.acesso === 'entregador';
       const ownId = isDeliverer ? await authenticatedDelivererId(req) : null;
       if (ownId === false) return res.status(403).json({ erro: 'A conta não está vinculada a um entregador.' });
+      if (isDeliverer) {
+        const [availableRows] = await db.execute(`SELECT id, status, descricao, criado_em FROM entregas
+          WHERE id = ? AND status = 'na_farmacia' AND entregador_id IS NULL LIMIT 1`, [req.params.id]);
+        if (availableRows[0]) return res.set('Cache-Control', 'no-store').json({ entrega: limitedPharmacyDelivery(availableRows[0]), historico: [] });
+      }
+      const ownershipFilter = isDeliverer ? ' AND e.entregador_id = ?' : '';
+      const [rows] = await db.execute(`${DELIVERY_SELECT} WHERE e.id = ?${ownershipFilter} LIMIT 1`, isDeliverer ? [req.params.id, ownId] : [req.params.id]);
+      if (!rows[0]) return res.status(404).json({ erro: 'Entrega não encontrada.' });
       const row = rows[0];
-      const mine = isDeliverer && String(row.entregador_id) === String(ownId);
-      if (isDeliverer && !mine && row.status !== 'na_farmacia') return res.status(404).json({ erro: 'Entrega não encontrada.' });
       const [history] = await db.execute(`SELECT h.id, h.status_anterior, h.status_novo, h.motivo, h.usuario_id, h.criado_em, u.nome AS usuario_nome
         FROM historico_status_entregas h LEFT JOIN usuarios u ON u.id = h.usuario_id
         WHERE h.entrega_id = ? ORDER BY h.criado_em DESC, h.id DESC`, [req.params.id]);
-      if (isDeliverer && !mine) return res.set('Cache-Control', 'no-store').json({ entrega: limitedPharmacyDelivery(row, ownId), historico: [] });
       res.set('Cache-Control', 'no-store').json({ entrega: isDeliverer ? { ...ownDelivery(row), atribuida_a_mim: true } : row, historico: isDeliverer ? history.map(({ usuario_id, usuario_nome, ...event }) => event) : history });
     } catch (error) { next(error); }
   });
@@ -241,10 +257,11 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
     let connection;
     try {
       connection = await db.getConnection(); await connection.beginTransaction();
-      const [rows] = await connection.execute('SELECT status, entregador_id FROM entregas WHERE id = ? LIMIT 1 FOR UPDATE', [req.params.id]);
+      const lockSql = `SELECT status, entregador_id FROM entregas WHERE id = ?${isDeliverer ? ' AND entregador_id = ?' : ''} LIMIT 1 FOR UPDATE`;
+      const [rows] = await connection.execute(lockSql, isDeliverer ? [req.params.id, ownId] : [req.params.id]);
       if (!rows[0]) { await connection.rollback(); return res.status(404).json({ erro: 'Entrega não encontrada.' }); }
       const current = rows[0].status; const next = body.status;
-      if (isDeliverer && (String(rows[0].entregador_id) !== String(ownId) || current !== 'na_farmacia')) { await connection.rollback(); return res.status(403).json({ erro: 'Esta entrega não está atribuída a você ou não pode ser colocada em trânsito.' }); }
+      if (isDeliverer && current !== 'na_farmacia') { await connection.rollback(); return res.status(403).json({ erro: 'Esta entrega não pode ser colocada em trânsito.' }); }
       const allowed = (current === 'na_farmacia' && next === 'em_transito') || (current === 'em_transito' && ['na_farmacia', 'concluida'].includes(next));
       if (!allowed) { await connection.rollback(); return res.status(409).json({ erro: 'Esta mudança de status não é permitida.' }); }
       await connection.execute('UPDATE entregas SET status = ? WHERE id = ?', [next, req.params.id]);
@@ -271,10 +288,11 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
     let connection;
     try {
       connection = await db.getConnection(); await connection.beginTransaction();
-      const [rows] = await connection.execute('SELECT status, entregador_id FROM entregas WHERE id = ? LIMIT 1 FOR UPDATE', [req.params.id]);
+      const lockSql = `SELECT status, entregador_id FROM entregas WHERE id = ?${isDeliverer ? ' AND entregador_id = ?' : ''} LIMIT 1 FOR UPDATE`;
+      const [rows] = await connection.execute(lockSql, isDeliverer ? [req.params.id, ownId] : [req.params.id]);
       if (!rows[0]) { await connection.rollback(); return res.status(404).json({ erro: 'Entrega não encontrada.' }); }
       const current = rows[0].status;
-      if (isDeliverer && (String(rows[0].entregador_id) !== String(ownId) || !['na_farmacia', 'em_transito'].includes(current))) { await connection.rollback(); return res.status(403).json({ erro: 'Esta entrega não está atribuída a você ou não pode ser cancelada.' }); }
+      if (isDeliverer && !['na_farmacia', 'em_transito'].includes(current)) { await connection.rollback(); return res.status(403).json({ erro: 'Esta entrega não pode ser cancelada.' }); }
       if (['concluida', 'cancelada'].includes(current)) { await connection.rollback(); return res.status(409).json({ erro: 'Entrega concluída ou cancelada não pode ser cancelada novamente.' }); }
       await connection.execute('UPDATE entregas SET status = ?, motivo_cancelamento = ?, cancelada_em = CURRENT_TIMESTAMP, cancelada_por = ? WHERE id = ?', ['cancelada', motivo, req.user?.id || null, req.params.id]);
       await connection.execute('INSERT INTO historico_status_entregas (entrega_id, status_anterior, status_novo, motivo, usuario_id) VALUES (?, ?, ?, ?, ?)', [req.params.id, current, 'cancelada', motivo, req.user?.id || null]);

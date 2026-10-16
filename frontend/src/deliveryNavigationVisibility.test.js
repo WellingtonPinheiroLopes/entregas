@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { canTraceDelivery } from './deliveryNavigation.js'
 
 const source = await readFile(new URL('./Deliveries.jsx', import.meta.url), 'utf8')
+const backendSource = await readFile(new URL('../../backend/src/deliveries.js', import.meta.url), 'utf8')
 
 test('navegação também exige que a entrega esteja atribuída ao usuário atual', () => {
   assert.match(source, /const terminal = detail && \['concluida', 'cancelada'\]\.includes\(detail\.entrega\.status\)/)
@@ -51,8 +52,18 @@ test('ações cadastrais e de administração são ocultas para entregadores', (
   assert.match(source, /isAdmin && <button type="button" className="secondary-button delivery-action-edit"/)
   assert.match(source, /!terminal && \(isAdmin \|\| \(isDeliverer && detailMine\)\)/)
   assert.match(source, /isAdmin && detail\.entrega\.status === 'em_transito' && <button type="button" className="submit-button account-submit delivery-action-complete"/)
-  assert.match(source, /isDeliverer && !detailMine/)
+  assert.match(source, /!detail\.entrega\.pre_visualizacao/)
   assert.match(source, /window\.setInterval\(refreshVisibleData, 30000\)/)
   assert.match(source, /window\.addEventListener\('focus', refreshVisibleData\)/)
   assert.match(source, /catch\(\(requestError\) => \{ setDetail\(null\); setError\(requestError\.message\) \}/)
+})
+
+test('prévia de entrega não atribuída oculta cliente, endereço e navegação', () => {
+  assert.match(source, /item\.pre_visualizacao \? '—'/)
+  assert.match(source, /item\.pre_visualizacao \? 'Após atribuição' : addressSummary\(item\)/)
+  assert.match(source, /!detail\.entrega\.pre_visualizacao && <><div className="delivery-full-row"><span>Endereço de destino/)
+  assert.match(backendSource, /id: row\.id, status: row\.status, descricao: row\.descricao, criado_em: row\.criado_em/)
+  assert.match(backendSource, /status = 'na_farmacia' AND entregador_id IS NULL/)
+  assert.match(backendSource, /assignedFilters = \['e\.entregador_id = \?'\]/)
+  assert.match(backendSource, /WHERE id = \? AND status = 'na_farmacia' AND entregador_id IS NULL/)
 })
