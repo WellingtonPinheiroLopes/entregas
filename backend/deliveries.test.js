@@ -54,7 +54,7 @@ const mockDb = {
       return [sql.includes('ORDER BY e.criado_em DESC') ? projected.reverse() : projected];
     }
     if (sql.includes('FROM historico_status_entregas h')) return [[...history.filter((event) => String(event.entrega_id) === String(params[0])).reverse().map((event) => ({ ...event, usuario_nome: users.find((user) => user.id === event.usuario_id)?.nome || null }))]];
-    if (sql.includes("WHERE (status = 'na_farmacia' AND entregador_id IS NULL)")) return [[...['na_farmacia', 'em_transito', 'concluida', 'cancelada'].flatMap((status) => { const total = deliveries.filter((item) => item.status === status && (status === 'na_farmacia' ? item.entregador_id == null : String(item.entregador_id) === String(params[0]))).length; return total ? [{ status, total }] : []; })]];
+    if (sql.includes("WHERE (status = 'na_farmacia' AND (entregador_id IS NULL OR entregador_id = ?))")) return [[...['na_farmacia', 'em_transito', 'concluida', 'cancelada'].flatMap((status) => { const total = deliveries.filter((item) => item.status === status && (status === 'na_farmacia' ? item.entregador_id == null || String(item.entregador_id) === String(params[0]) : String(item.entregador_id) === String(params[1]))).length; return total ? [{ status, total }] : []; })]];
     if (sql.includes('GROUP BY status')) return [[...['na_farmacia', 'em_transito', 'concluida', 'cancelada'].flatMap((status) => { const total = deliveries.filter((item) => item.status === status).length; return total ? [{ status, total }] : []; })]];
     if (sql.includes('FROM entregas WHERE id')) return [[...deliveries.filter((item) => String(item.id) === String(params[0]) && (!sql.includes('AND entregador_id = ?') || String(item.entregador_id) === String(params[1]))).map(({ id, status, entregador_id }) => ({ id, status, entregador_id }))]];
     if (sql.startsWith('INSERT INTO entregas')) {
@@ -234,18 +234,26 @@ test('entregador vê prévia da farmácia e somente os detalhes e ações das pr
   await createDelivery({ descricao: 'Atribuída ao segundo', entregador_id: 202 });
   await createDelivery({ descricao: 'Sem atribuição', entregador_id: null, observacoes: 'Privado' });
   await createDelivery({ descricao: 'Na farmácia atribuída a outro', entregador_id: 202 });
+  await createDelivery({ descricao: 'Na farmácia do primeiro', entregador_id: 201 });
+  await createDelivery({ descricao: 'Concluída do primeiro', entregador_id: 201 });
+  await createDelivery({ descricao: 'Cancelada do primeiro', entregador_id: 201 });
+  await createDelivery({ descricao: 'Concluída do segundo', entregador_id: 202 });
+  await createDelivery({ descricao: 'Cancelada do segundo', entregador_id: 202 });
   deliveries[0].status = 'em_transito';
   deliveries[1].status = 'em_transito';
   deliveries[2].observacoes = 'Privado';
-  assert.deepEqual((await request('/api/deliveries')).body.map((item) => item.id).sort(), [1, 2, 3, 4]);
-  assert.deepEqual((await request('/api/deliveries/summary')).body.statuses, { na_farmacia: 2, em_transito: 2, concluida: 0, cancelada: 0 });
+  deliveries[5].status = 'concluida'; deliveries[6].status = 'cancelada';
+  deliveries[7].status = 'concluida'; deliveries[8].status = 'cancelada';
+  assert.deepEqual((await request('/api/deliveries')).body.map((item) => item.id).sort(), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.deepEqual((await request('/api/deliveries/summary')).body.statuses, { na_farmacia: 3, em_transito: 2, concluida: 2, cancelada: 2 });
   cookie = ''; await login('driver@example.com');
 
   assert.equal((await request('/api/deliveries/summary')).response.status, 200);
   const summary = (await request('/api/deliveries/summary')).body;
-  assert.deepEqual(summary.statuses, { na_farmacia: 1, em_transito: 1, concluida: 0, cancelada: 0 });
+  assert.deepEqual(summary.statuses, { na_farmacia: 2, em_transito: 1, concluida: 1, cancelada: 1 });
+  assert.equal(summary.total, 5);
   const list = (await request('/api/deliveries')).body;
-  assert.deepEqual(list.map((item) => item.id).sort(), [1, 3]);
+  assert.deepEqual(list.map((item) => item.id).sort(), [1, 3, 5, 6, 7]);
   assert.equal(list.find((item) => item.id === 3).observacoes, undefined);
   assert.equal(list.find((item) => item.id === 3).cliente_cpf, undefined);
   assert.equal(list.find((item) => item.id === 3).endereco_destino, undefined);
@@ -267,9 +275,10 @@ test('entregador vê prévia da farmácia e somente os detalhes e ações das pr
   assert.equal((await request('/api/deliveries/1')).response.status, 404);
   cookie = ''; await login('driver2@example.com');
   const driverBList = (await request('/api/deliveries')).body;
-  assert.deepEqual(driverBList.map((item) => item.id).sort(), [1, 2, 3, 4]);
+  assert.deepEqual(driverBList.map((item) => item.id).sort(), [1, 2, 3, 4, 8, 9]);
   const driverBSummary = (await request('/api/deliveries/summary')).body;
-  assert.deepEqual(driverBSummary.statuses, { na_farmacia: 1, em_transito: 2, concluida: 0, cancelada: 0 });
+  assert.deepEqual(driverBSummary.statuses, { na_farmacia: 2, em_transito: 2, concluida: 1, cancelada: 1 });
+  assert.equal(driverBSummary.total, 6);
 });
 
 test('entregador pode mover sua entrega da farmácia ao trânsito e cancelar com motivo; não pode editar ou reativar', async () => {

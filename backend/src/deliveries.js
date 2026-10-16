@@ -83,8 +83,8 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
         const ownId = await authenticatedDelivererId(req);
         if (ownId === false) return res.status(403).json({ erro: 'A conta não está vinculada a um entregador.' });
         const [rows] = await db.execute(`SELECT status, COUNT(*) AS total FROM entregas
-          WHERE (status = 'na_farmacia' AND entregador_id IS NULL)
-            OR (entregador_id = ? AND status IN ('em_transito', 'concluida', 'cancelada')) GROUP BY status`, [ownId]);
+          WHERE (status = 'na_farmacia' AND (entregador_id IS NULL OR entregador_id = ?))
+            OR (entregador_id = ? AND status IN ('em_transito', 'concluida', 'cancelada')) GROUP BY status`, [ownId, ownId]);
         for (const row of rows) if (Object.hasOwn(totals, row.status)) totals[row.status] = Number(row.total);
       }
       res.set('Cache-Control', 'no-store').json({ total: Object.values(totals).reduce((sum, amount) => sum + amount, 0), statuses: totals, labels: STATUS_LABELS });
