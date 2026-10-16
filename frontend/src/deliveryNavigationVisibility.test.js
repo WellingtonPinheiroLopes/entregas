@@ -5,9 +5,10 @@ import { canTraceDelivery } from './deliveryNavigation.js'
 
 const source = await readFile(new URL('./Deliveries.jsx', import.meta.url), 'utf8')
 
-test('navegação fica visível somente quando a entrega não está concluída nem cancelada', () => {
+test('navegação também exige que a entrega esteja atribuída ao usuário atual', () => {
   assert.match(source, /const terminal = detail && \['concluida', 'cancelada'\]\.includes\(detail\.entrega\.status\)/)
-  assert.match(source, /const canTraceRoute = detail && canTraceDelivery\(detail\.entrega\.status\)/)
+  assert.match(source, /const detailMine = isAdmin \|\| detail\?\.entrega\.atribuida_a_mim === true/)
+  assert.match(source, /const canTraceRoute = detail && detailMine && canTraceDelivery\(detail\.entrega\.status\)/)
   assert.match(source, /\{canTraceRoute && <section className="delivery-navigation"/)
   assert.match(source, /delivery-navigation-google/)
   assert.match(source, /delivery-navigation-waze/)
@@ -42,6 +43,16 @@ test('cadastro aceita entrega sem entregador e indica a atribuição pendente na
   const saveAction = source.slice(source.indexOf('async function save'), source.indexOf('async function openDetail'))
   assert.doesNotMatch(saveAction, /!form\.entregador_id/)
   assert.match(source, /endpoint="\/deliverers" label="Entregador"[^>]*onExpired=\{onExpired\} \/>/)
-  assert.match(source, /item\.entregador_nome \|\| "Aguardando entregador"/)
-  assert.match(source, /detail\.entrega\.entregador_nome \? `\$\{detail\.entrega\.entregador_nome\} · #\$\{detail\.entrega\.entregador_id\}` : "Aguardando entregador"/)
+  assert.match(source, /item\.entregador_nome \|\| ['"]Aguardando entregador/)
+  assert.match(source, /atribuida_a_mim/)
+})
+
+test('ações cadastrais e de administração são ocultas para entregadores', () => {
+  assert.match(source, /isAdmin && <button type="button" className="secondary-button delivery-action-edit"/)
+  assert.match(source, /!terminal && \(isAdmin \|\| \(isDeliverer && detailMine\)\)/)
+  assert.match(source, /isAdmin && detail\.entrega\.status === 'em_transito' && <button type="button" className="submit-button account-submit delivery-action-complete"/)
+  assert.match(source, /isDeliverer && !detailMine/)
+  assert.match(source, /window\.setInterval\(refreshVisibleData, 30000\)/)
+  assert.match(source, /window\.addEventListener\('focus', refreshVisibleData\)/)
+  assert.match(source, /catch\(\(requestError\) => \{ setDetail\(null\); setError\(requestError\.message\) \}/)
 })

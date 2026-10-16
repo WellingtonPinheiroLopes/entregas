@@ -52,18 +52,48 @@ function parseOptionalFields(body, fields) {
 
 function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAccess }) {
   const admin = requireAccess('administrador');
+  const adminOrDeliverer = requireAccess('administrador', 'entregador');
   const DELIVERY_FIELDS = ['descricao', ...DESTINATION_FIELDS, 'observacoes'];
 
-  app.get('/api/deliveries/summary', authenticate, admin, async (req, res, next) => {
+  async function authenticatedDelivererId(req) {
+    if (req.user?.acesso !== 'entregador') return null;
+    const [rows] = await db.execute('SELECT id FROM entregadores WHERE usuario_id = ? LIMIT 1', [req.user.id]);
+    return rows[0]?.id ?? false;
+  }
+
+  function limitedPharmacyDelivery(row, ownId) {
+    return {
+      id: row.id, status: row.status, cliente_id: row.cliente_id, cliente_nome: row.cliente_nome,
+      descricao: row.descricao, cep_destino: row.cep_destino, endereco_destino: row.endereco_destino,
+      quadra_destino: row.quadra_destino, lote_destino: row.lote_destino, numero_destino: row.numero_destino,
+      setor_destino: row.setor_destino, cidade_destino: row.cidade_destino, estado_destino: row.estado_destino,
+      criado_em: row.criado_em, atribuida_a_mim: String(row.entregador_id) === String(ownId),
+    };
+  }
+
+  function ownDelivery(row) {
+    const { cliente_cpf, entregador_cpf, cancelada_por, ...safe } = row;
+    return safe;
+  }
+
+  app.get('/api/deliveries/summary', authenticate, adminOrDeliverer, async (req, res, next) => {
     try {
-      const [rows] = await db.execute('SELECT status, COUNT(*) AS total FROM entregas GROUP BY status');
       const totals = Object.fromEntries(DELIVERY_STATUSES.map((status) => [status, 0]));
-      for (const row of rows) if (Object.hasOwn(totals, row.status)) totals[row.status] = Number(row.total);
+      if (req.user.acesso === 'administrador') {
+        const [rows] = await db.execute('SELECT status, COUNT(*) AS total FROM entregas GROUP BY status');
+        for (const row of rows) if (Object.hasOwn(totals, row.status)) totals[row.status] = Number(row.total);
+      } else {
+        const ownId = await authenticatedDelivererId(req);
+        if (ownId === false) return res.status(403).json({ erro: 'A conta não está vinculada a um entregador.' });
+        const [rows] = await db.execute(`SELECT status, COUNT(*) AS total FROM entregas
+          WHERE status = 'na_farmacia' OR (entregador_id = ? AND status IN ('em_transito', 'concluida', 'cancelada')) GROUP BY status`, [ownId]);
+        for (const row of rows) if (Object.hasOwn(totals, row.status)) totals[row.status] = Number(row.total);
+      }
       res.set('Cache-Control', 'no-store').json({ total: Object.values(totals).reduce((sum, amount) => sum + amount, 0), statuses: totals, labels: STATUS_LABELS });
     } catch (error) { next(error); }
   });
 
-  app.get('/api/deliveries', authenticate, admin, async (req, res, next) => {
+  app.get('/api/deliveries', authenticate, adminOrDeliverer, async (req, res, next) => {
     const filters = [];
     const values = [];
     const { status, cliente_id, entregador_id, de, ate, q } = req.query;
@@ -82,21 +112,35 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
     if (de && ate && de > ate) return res.status(400).json({ erro: 'O período informado é inválido.' });
     if (typeof q === 'string' && q.trim()) { filters.push('(e.descricao LIKE ? OR c.nome LIKE ? OR en.nome LIKE ?)'); const pattern = `%${q.trim()}%`; values.push(pattern, pattern, pattern); }
     try {
+      const isDeliverer = req.user.acesso === 'entregador';
+      const ownId = isDeliverer ? await authenticatedDelivererId(req) : null;
+      if (ownId === false) return res.status(403).json({ erro: 'A conta não está vinculada a um entregador.' });
+      if (isDeliverer && (cliente_id !== undefined || entregador_id !== undefined || de !== undefined || ate !== undefined)) return res.status(403).json({ erro: 'Filtro não permitido.' });
       const where = filters.length ? ` WHERE ${filters.join(' AND ')}` : '';
-      const [rows] = await db.execute(`${DELIVERY_SELECT}${where} ORDER BY e.criado_em DESC, e.id DESC`, values);
-      res.set('Cache-Control', 'no-store').json(rows);
+      const driverWhere = isDeliverer ? ` WHERE (e.status = 'na_farmacia' OR e.entregador_id = ?)${status ? ' AND e.status = ?' : ''}${q?.trim() ? ' AND (e.descricao LIKE ? OR c.nome LIKE ?)' : ''}` : where;
+      const driverValues = isDeliverer ? [ownId, ...(status ? [status] : []), ...(q?.trim() ? [`%${q.trim()}%`, `%${q.trim()}%`] : [])] : values;
+      const [rows] = await db.execute(`${DELIVERY_SELECT}${isDeliverer ? driverWhere : where} ORDER BY e.criado_em DESC, e.id DESC`, isDeliverer ? driverValues : values);
+      const visible = isDeliverer ? rows.filter((row) => row.status === 'na_farmacia' || String(row.entregador_id) === String(ownId)).map((row) => row.status === 'na_farmacia' ? limitedPharmacyDelivery(row, ownId) : { ...ownDelivery(row), atribuida_a_mim: true }) : rows;
+      res.set('Cache-Control', 'no-store').json(visible);
     } catch (error) { next(error); }
   });
 
-  app.get('/api/deliveries/:id', authenticate, admin, async (req, res, next) => {
+  app.get('/api/deliveries/:id', authenticate, adminOrDeliverer, async (req, res, next) => {
     if (!validId(req.params.id)) return res.status(400).json({ erro: 'Identificador inválido.' });
     try {
       const [rows] = await db.execute(`${DELIVERY_SELECT} WHERE e.id = ? LIMIT 1`, [req.params.id]);
       if (!rows[0]) return res.status(404).json({ erro: 'Entrega não encontrada.' });
+      const isDeliverer = req.user.acesso === 'entregador';
+      const ownId = isDeliverer ? await authenticatedDelivererId(req) : null;
+      if (ownId === false) return res.status(403).json({ erro: 'A conta não está vinculada a um entregador.' });
+      const row = rows[0];
+      const mine = isDeliverer && String(row.entregador_id) === String(ownId);
+      if (isDeliverer && !mine && row.status !== 'na_farmacia') return res.status(404).json({ erro: 'Entrega não encontrada.' });
       const [history] = await db.execute(`SELECT h.id, h.status_anterior, h.status_novo, h.motivo, h.usuario_id, h.criado_em, u.nome AS usuario_nome
         FROM historico_status_entregas h LEFT JOIN usuarios u ON u.id = h.usuario_id
         WHERE h.entrega_id = ? ORDER BY h.criado_em DESC, h.id DESC`, [req.params.id]);
-      res.set('Cache-Control', 'no-store').json({ entrega: rows[0], historico: history });
+      if (isDeliverer && !mine) return res.set('Cache-Control', 'no-store').json({ entrega: limitedPharmacyDelivery(row, ownId), historico: [] });
+      res.set('Cache-Control', 'no-store').json({ entrega: isDeliverer ? { ...ownDelivery(row), atribuida_a_mim: true } : row, historico: isDeliverer ? history.map(({ usuario_id, usuario_nome, ...event }) => event) : history });
     } catch (error) { next(error); }
   });
 
@@ -182,16 +226,25 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
     }
   });
 
-  app.patch('/api/deliveries/:id/status', csrfGuard, authenticate, admin, async (req, res, next) => {
+  app.patch('/api/deliveries/:id/status', csrfGuard, authenticate, adminOrDeliverer, async (req, res, next) => {
     if (!validId(req.params.id)) return res.status(400).json({ erro: 'Identificador inválido.' });
     const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
     if (Object.keys(body).length !== 1 || !['na_farmacia', 'em_transito', 'concluida'].includes(body.status)) return res.status(400).json({ erro: 'Status inválido. Use a ação de cancelamento para cancelar uma entrega.' });
+    const isDeliverer = req.user.acesso === 'entregador';
+    let ownId = null;
+    if (isDeliverer) {
+      try { ownId = await authenticatedDelivererId(req); }
+      catch (error) { return next(error); }
+      if (ownId === false) return res.status(403).json({ erro: 'A conta não está vinculada a um entregador.' });
+      if (body.status !== 'em_transito') return res.status(403).json({ erro: 'Ação não permitida para entregadores.' });
+    }
     let connection;
     try {
       connection = await db.getConnection(); await connection.beginTransaction();
-      const [rows] = await connection.execute('SELECT status FROM entregas WHERE id = ? LIMIT 1 FOR UPDATE', [req.params.id]);
+      const [rows] = await connection.execute('SELECT status, entregador_id FROM entregas WHERE id = ? LIMIT 1 FOR UPDATE', [req.params.id]);
       if (!rows[0]) { await connection.rollback(); return res.status(404).json({ erro: 'Entrega não encontrada.' }); }
       const current = rows[0].status; const next = body.status;
+      if (isDeliverer && (String(rows[0].entregador_id) !== String(ownId) || current !== 'na_farmacia')) { await connection.rollback(); return res.status(403).json({ erro: 'Esta entrega não está atribuída a você ou não pode ser colocada em trânsito.' }); }
       const allowed = (current === 'na_farmacia' && next === 'em_transito') || (current === 'em_transito' && ['na_farmacia', 'concluida'].includes(next));
       if (!allowed) { await connection.rollback(); return res.status(409).json({ erro: 'Esta mudança de status não é permitida.' }); }
       await connection.execute('UPDATE entregas SET status = ? WHERE id = ?', [next, req.params.id]);
@@ -203,17 +256,25 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
     finally { if (connection) connection.release(); }
   });
 
-  app.post('/api/deliveries/:id/cancel', csrfGuard, authenticate, admin, async (req, res, next) => {
+  app.post('/api/deliveries/:id/cancel', csrfGuard, authenticate, adminOrDeliverer, async (req, res, next) => {
     if (!validId(req.params.id)) return res.status(400).json({ erro: 'Identificador inválido.' });
     const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
     const motivo = typeof body.motivo === 'string' ? body.motivo.trim() : '';
     if (Object.keys(body).some((key) => key !== 'motivo') || motivo.length < 3 || motivo.length > 2000) return res.status(400).json({ erro: 'Informe o motivo do cancelamento (de 3 a 2000 caracteres).' });
+    const isDeliverer = req.user.acesso === 'entregador';
+    let ownId = null;
+    if (isDeliverer) {
+      try { ownId = await authenticatedDelivererId(req); }
+      catch (error) { return next(error); }
+      if (ownId === false) return res.status(403).json({ erro: 'A conta não está vinculada a um entregador.' });
+    }
     let connection;
     try {
       connection = await db.getConnection(); await connection.beginTransaction();
-      const [rows] = await connection.execute('SELECT status FROM entregas WHERE id = ? LIMIT 1 FOR UPDATE', [req.params.id]);
+      const [rows] = await connection.execute('SELECT status, entregador_id FROM entregas WHERE id = ? LIMIT 1 FOR UPDATE', [req.params.id]);
       if (!rows[0]) { await connection.rollback(); return res.status(404).json({ erro: 'Entrega não encontrada.' }); }
       const current = rows[0].status;
+      if (isDeliverer && (String(rows[0].entregador_id) !== String(ownId) || !['na_farmacia', 'em_transito'].includes(current))) { await connection.rollback(); return res.status(403).json({ erro: 'Esta entrega não está atribuída a você ou não pode ser cancelada.' }); }
       if (['concluida', 'cancelada'].includes(current)) { await connection.rollback(); return res.status(409).json({ erro: 'Entrega concluída ou cancelada não pode ser cancelada novamente.' }); }
       await connection.execute('UPDATE entregas SET status = ?, motivo_cancelamento = ?, cancelada_em = CURRENT_TIMESTAMP, cancelada_por = ? WHERE id = ?', ['cancelada', motivo, req.user?.id || null, req.params.id]);
       await connection.execute('INSERT INTO historico_status_entregas (entrega_id, status_anterior, status_novo, motivo, usuario_id) VALUES (?, ?, ?, ?, ?)', [req.params.id, current, 'cancelada', motivo, req.user?.id || null]);

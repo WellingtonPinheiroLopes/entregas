@@ -8,9 +8,11 @@ const { createApp } = require('./app');
 const users = [
   { id: 1, nome: 'Admin', email: 'admin@example.com', acesso: 'administrador', criado_em: '2026-01-01', atualizado_em: '2026-01-01', senha_hash: '' },
   { id: 2, nome: 'Convidado', email: 'guest@example.com', acesso: 'convidado', criado_em: '2026-01-01', atualizado_em: '2026-01-01', senha_hash: '' },
+  { id: 3, nome: 'Entregador Teste', email: 'driver@example.com', acesso: 'entregador', criado_em: '2026-01-01', atualizado_em: '2026-01-01', senha_hash: '' },
+  { id: 4, nome: 'Entregador Outro', email: 'driver2@example.com', acesso: 'entregador', criado_em: '2026-01-01', atualizado_em: '2026-01-01', senha_hash: '' },
 ];
 const clients = [{ id: 101, nome: 'Cliente Teste', cpf: '52998224725', cep: '01001000', endereco: 'Rua Original', numero: '55', quadra: 'Q1', lote: 'L2', setor: 'Centro', cidade: 'São Paulo', estado: 'SP' }];
-const deliverers = [{ id: 201, nome: 'Entregador Teste', cpf: '11122233344', email: 'driver@example.com' }];
+const deliverers = [{ id: 201, nome: 'Entregador Teste', cpf: '11122233344', email: 'driver@example.com', usuario_id: 3 }, { id: 202, nome: 'Entregador Outro', cpf: '11122233345', email: 'driver2@example.com', usuario_id: 4 }];
 let deliveries = [];
 let history = [];
 let nextDeliveryId = 1;
@@ -23,11 +25,17 @@ const mockDb = {
     if (sql.includes('FROM usuarios WHERE id')) return [[...users.filter((user) => String(user.id) === String(params[0]))]];
     if (sql.includes('FROM clientes WHERE id')) return [[...clients.filter((client) => String(client.id) === String(params[0]))]];
     if (sql.includes('FROM entregadores WHERE id')) return [[...deliverers.filter((item) => String(item.id) === String(params[0]))]];
+    if (sql.includes('FROM entregadores WHERE usuario_id')) return [[...deliverers.filter((item) => String(item.usuario_id) === String(params[0]))]];
     if (sql.includes('FROM entregas e JOIN')) {
       if (failDeliveryQuery) { const error = new Error('db offline'); error.code = 'ECONNREFUSED'; throw error; }
       let selected = [...deliveries];
       if (sql.includes('WHERE e.id = ?')) selected = selected.filter((item) => String(item.id) === String(params[0]));
-      else if (sql.includes('WHERE')) {
+      else if (sql.includes("WHERE (e.status = 'na_farmacia' OR e.entregador_id = ?)")) {
+        selected = selected.filter((item) => item.status === 'na_farmacia' || String(item.entregador_id) === String(params[0]));
+        let index = 1;
+        if (sql.includes('AND e.status = ?')) { selected = selected.filter((item) => item.status === params[index]); index++; }
+        if (sql.includes('AND (e.descricao LIKE ? OR c.nome LIKE ?)')) { const q = params[index].slice(1, -1).toLowerCase(); selected = selected.filter((item) => item.descricao.toLowerCase().includes(q) || clients.find((c) => c.id === item.cliente_id)?.nome.toLowerCase().includes(q)); }
+      } else if (sql.includes('WHERE')) {
         let index = 0;
         if (sql.includes('e.status = ?')) { selected = selected.filter((item) => item.status === params[index]); index++; }
         if (sql.includes('e.cliente_id = ?')) { selected = selected.filter((item) => String(item.cliente_id) === String(params[index])); index++; }
@@ -40,8 +48,9 @@ const mockDb = {
       return [sql.includes('ORDER BY e.criado_em DESC') ? projected.reverse() : projected];
     }
     if (sql.includes('FROM historico_status_entregas h')) return [[...history.filter((event) => String(event.entrega_id) === String(params[0])).reverse().map((event) => ({ ...event, usuario_nome: users.find((user) => user.id === event.usuario_id)?.nome || null }))]];
+    if (sql.includes("WHERE status = 'na_farmacia' OR")) return [[...['na_farmacia', 'em_transito', 'concluida', 'cancelada'].flatMap((status) => { const total = deliveries.filter((item) => item.status === status && (status === 'na_farmacia' || String(item.entregador_id) === String(params[0]))).length; return total ? [{ status, total }] : []; })]];
     if (sql.includes('GROUP BY status')) return [[...['na_farmacia', 'em_transito', 'concluida', 'cancelada'].flatMap((status) => { const total = deliveries.filter((item) => item.status === status).length; return total ? [{ status, total }] : []; })]];
-    if (sql.includes('FROM entregas WHERE id')) return [[...deliveries.filter((item) => String(item.id) === String(params[0])).map(({ id, status }) => ({ id, status }))]];
+    if (sql.includes('FROM entregas WHERE id')) return [[...deliveries.filter((item) => String(item.id) === String(params[0])).map(({ id, status, entregador_id }) => ({ id, status, entregador_id }))]];
     if (sql.startsWith('INSERT INTO entregas')) {
       const fields = sql.match(/\(([^)]+)\)/)[1].split(', ');
       const item = Object.fromEntries(fields.map((field, index) => [field, params[index]]));
@@ -87,7 +96,7 @@ async function request(path, options = {}) {
 }
 async function login(email) {
   const token = (await request('/api/auth/csrf')).body.csrfToken;
-  return request('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token }, body: JSON.stringify({ email, senha: email.startsWith('admin') ? 'admin-password' : 'guest-password' }) });
+  return request('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token }, body: JSON.stringify({ email, senha: email.startsWith('admin') ? 'admin-password' : email.startsWith('driver') ? 'driver-password' : 'guest-password' }) });
 }
 async function mutate(method, path, payload) {
   const token = (await request('/api/auth/me')).body.csrfToken;
@@ -98,7 +107,8 @@ async function createDelivery(overrides = {}) {
 }
 
 before(async () => {
-  users[0].senha_hash = await bcrypt.hash('admin-password', 4); users[1].senha_hash = await bcrypt.hash('guest-password', 4);
+  process.env.LOGIN_RATE_LIMIT = '100';
+  users[0].senha_hash = await bcrypt.hash('admin-password', 4); users[1].senha_hash = await bcrypt.hash('guest-password', 4); users[2].senha_hash = await bcrypt.hash('driver-password', 4); users[3].senha_hash = await bcrypt.hash('driver-password', 4);
   const app = createApp({ db: mockDb, sessionStore: new session.MemoryStore(), testing: true });
   server = app.listen(0, '127.0.0.1'); await new Promise((resolve) => server.once('listening', resolve)); baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
@@ -212,8 +222,62 @@ test('edita campos permitidos e cancela com motivo auditado em transação', asy
   assert.equal((await mutate('POST', '/api/deliveries/1/cancel', { motivo: 'Tentar outra vez' })).response.status, 409);
 });
 
-test('filtra datas, trata entrega inexistente e erro de banco sem expor detalhes', async () => {
+test('entregador vê prévia da farmácia e somente os detalhes e ações das próprias entregas', async () => {
   await login('admin@example.com');
+  await createDelivery({ descricao: 'Atribuída ao primeiro', entregador_id: 201 });
+  await createDelivery({ descricao: 'Atribuída ao segundo', entregador_id: 202 });
+  await createDelivery({ descricao: 'Sem atribuição', entregador_id: null, observacoes: 'Privado' });
+  await createDelivery({ descricao: 'Na farmácia atribuída a outro', entregador_id: 202 });
+  deliveries[0].status = 'em_transito';
+  deliveries[1].status = 'em_transito';
+  deliveries[2].observacoes = 'Privado';
+  cookie = ''; await login('driver@example.com');
+
+  assert.equal((await request('/api/deliveries/summary')).response.status, 200);
+  const summary = (await request('/api/deliveries/summary')).body;
+  assert.deepEqual(summary.statuses, { na_farmacia: 2, em_transito: 1, concluida: 0, cancelada: 0 });
+  const list = (await request('/api/deliveries')).body;
+  assert.deepEqual(list.map((item) => item.id).sort(), [1, 3, 4]);
+  assert.equal(list.find((item) => item.id === 3).observacoes, undefined);
+  assert.equal(list.find((item) => item.id === 3).cliente_cpf, undefined);
+  assert.equal(list.find((item) => item.id === 3).atribuida_a_mim, false);
+  assert.equal(list.find((item) => item.id === 4).entregador_id, undefined);
+  assert.equal((await request('/api/deliveries/4')).body.entrega.atribuida_a_mim, false);
+  assert.equal((await request('/api/deliveries/2')).response.status, 404);
+  const own = await request('/api/deliveries/1');
+  assert.equal(own.response.status, 200); assert.equal(own.body.entrega.atribuida_a_mim, true);
+
+  assert.equal((await mutate('PATCH', '/api/deliveries/1', { endereco_destino: 'Tentativa' })).response.status, 403);
+  assert.equal((await mutate('PATCH', '/api/deliveries/3/status', { status: 'em_transito' })).response.status, 403);
+  assert.equal((await mutate('POST', '/api/deliveries/3/cancel', { motivo: 'Não atribuída' })).response.status, 403);
+  assert.equal((await mutate('PATCH', '/api/deliveries/1/status', { status: 'na_farmacia' })).response.status, 403);
+  assert.equal((await mutate('PATCH', '/api/deliveries/1/status', { status: 'concluida' })).response.status, 403);
+  assert.equal((await mutate('PATCH', '/api/deliveries/1/status', { status: 'em_transito' })).response.status, 403);
+  assert.equal(deliveries[0].status, 'em_transito');
+  deliveries[0].entregador_id = 202;
+  assert.equal((await request('/api/deliveries/1')).response.status, 404);
+});
+
+test('entregador pode mover sua entrega da farmácia ao trânsito e cancelar com motivo; não pode editar ou reativar', async () => {
+  await login('admin@example.com');
+  await createDelivery({ entregador_id: 201 });
+  await createDelivery({ entregador_id: 201, descricao: 'Cancelar' });
+  await createDelivery({ entregador_id: 201, descricao: 'Concluída' });
+  deliveries[2].status = 'concluida';
+  cookie = ''; await login('driver@example.com');
+  assert.equal((await mutate('POST', '/api/deliveries/2/cancel', {})).response.status, 400);
+  const transit = await mutate('PATCH', '/api/deliveries/1/status', { status: 'em_transito' });
+  assert.equal(transit.response.status, 200); assert.equal(transit.body.entrega.status, 'em_transito');
+  assert.equal((await mutate('POST', '/api/deliveries/2/cancel', { motivo: 'Cliente ausente' })).response.status, 200);
+  assert.equal(deliveries[1].status, 'cancelada');
+  assert.equal(history.at(-1).motivo, 'Cliente ausente');
+  assert.equal((await mutate('PATCH', '/api/deliveries/2/status', { status: 'na_farmacia' })).response.status, 403);
+  assert.equal((await mutate('PATCH', '/api/deliveries/3/status', { status: 'em_transito' })).response.status, 403);
+  assert.equal((await mutate('PATCH', '/api/deliveries/3', { descricao: 'Tentativa' })).response.status, 403);
+});
+
+test('filtra datas, trata entrega inexistente e erro de banco sem expor detalhes', async () => {
+  assert.equal((await login('admin@example.com')).response.status, 200);
   assert.equal((await request('/api/deliveries?de=inválida')).response.status, 400);
   assert.equal((await request('/api/deliveries?de=2026-12-01&ate=2026-01-01')).response.status, 400);
   assert.equal((await mutate('PATCH', '/api/deliveries/999/status', { status: 'em_transito' })).response.status, 404);

@@ -21,6 +21,15 @@ test('indicadores são atalhos próprios e enviam os quatro status internos', as
   assert.match(overview, /summary\?\.statuses\?\.\[status\]/)
 })
 
+test('entregador acessa painel e tela de entregas sem receber navegação administrativa', async () => {
+  const app = await readSource('App.jsx')
+  const dashboard = app.slice(app.indexOf('function Dashboard'), app.indexOf('\nexport default function App'))
+  assert.match(dashboard, /\['administrador', 'entregador'\]\.includes\(user\.acesso\).*Entregas/)
+  assert.match(dashboard, /view === 'deliveries' && \['administrador', 'entregador'\]\.includes\(user\.acesso\).*<Deliveries/)
+  assert.match(dashboard, /\['administrador', 'entregador'\]\.includes\(user\.acesso\) && <DeliveryOverview/)
+  assert.match(dashboard, /view === 'users' && user\.acesso === 'administrador'/)
+})
+
 test('atalhos inicializam o filtro da tabela e o filtro atual permite voltar a Todos', async () => {
   const [app, deliveries] = await Promise.all([readSource('App.jsx'), readSource('Deliveries.jsx')])
   assert.match(app, /function openDeliveries\(status = ''\)[\s\S]*setDeliveryStatusFilter\(status\)[\s\S]*setView\('deliveries'\)/)
