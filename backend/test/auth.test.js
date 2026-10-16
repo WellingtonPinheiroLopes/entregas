@@ -10,7 +10,11 @@ const user = {
   id: 7, nome: 'Conta Teste', email: 'teste@example.com', acesso: 'convidado',
   criado_em: '2026-01-01T00:00:00.000Z', atualizado_em: '2026-01-01T00:00:00.000Z'
 };
+const admin = { ...user, id: 8, nome: 'Administradora', email: 'admin@example.com', acesso: 'administrador' };
+const deliverer = { ...user, id: 9, nome: 'Entregador Teste', email: 'entregador@example.com', acesso: 'entregador' };
 let passwordHash;
+let adminHash;
+let delivererHash;
 let server;
 let baseUrl;
 let cookie = '';
@@ -18,11 +22,20 @@ let currentAccess = 'convidado';
 
 const db = {
   async execute(sql, params = []) {
+    const accounts = [user, admin, deliverer];
     if (sql.includes('FROM usuarios WHERE email')) {
-      return [params[0] === user.email ? [{ ...user, acesso: currentAccess, senha_hash: passwordHash }] : []];
+      const account = accounts.find((item) => item.email === params[0]);
+      return [account ? [{ ...account, acesso: account.id === user.id ? currentAccess : account.acesso, senha_hash: account.id === user.id ? passwordHash : account.id === admin.id ? adminHash : delivererHash }] : []];
     }
-    if (sql.includes('FROM usuarios WHERE id')) return [params[0] === user.id ? [{ ...user, acesso: currentAccess }] : []];
-    if (sql.includes('FROM usuarios ORDER')) return [[{ ...user, acesso: currentAccess }]];
+    if (sql.includes('FROM usuarios WHERE nome')) {
+      const matches = accounts.filter((item) => item.nome === params[0]);
+      return [matches.map((account) => ({ ...account, senha_hash: account.id === user.id ? passwordHash : account.id === admin.id ? adminHash : delivererHash }))];
+    }
+    if (sql.includes('FROM usuarios WHERE id')) {
+      const account = accounts.find((item) => item.id === Number(params[0]));
+      return [account ? [{ ...account, acesso: account.id === user.id ? currentAccess : account.acesso }] : []];
+    }
+    if (sql.includes('FROM usuarios ORDER')) return [accounts.map((account) => ({ ...account, acesso: account.id === user.id ? currentAccess : account.acesso }))];
     return [[]];
   },
   async query() { return [[]]; }
@@ -42,16 +55,19 @@ async function getCsrf() {
   return body.csrfToken;
 }
 
-async function login(email = user.email, senha = 'senha-segura') {
+async function login(identifier = user.email, senha = 'senha-segura') {
   const csrfToken = await getCsrf();
   return request('/api/auth/login', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-    body: JSON.stringify({ email, senha })
+    body: JSON.stringify({ identificador: identifier, senha })
   });
 }
 
 before(async () => {
+  process.env.LOGIN_RATE_LIMIT = '100';
   passwordHash = await bcrypt.hash('senha-segura', 4);
+  adminHash = await bcrypt.hash('senha-segura', 4);
+  delivererHash = await bcrypt.hash('senha-segura', 4);
   const app = createApp({ db, sessionStore: new session.MemoryStore(), testing: true });
   server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
@@ -68,6 +84,31 @@ test('login válido cria sessão e retorna dados públicos sem hash', async () =
   assert.equal(body.usuario.acesso, 'convidado');
   assert.equal(JSON.stringify(body).includes(passwordHash), false);
   assert.ok(body.csrfToken);
+});
+
+test('admin e entregador entram com e-mail ou nome, e o perfil carregado é o da conta', async () => {
+  for (const account of [admin, deliverer]) {
+    for (const identifier of [account.email, account.nome]) {
+      cookie = '';
+      const { response, body } = await login(identifier);
+      assert.equal(response.status, 200);
+      assert.equal(body.usuario.id, account.id);
+      assert.equal(body.usuario.acesso, account.acesso);
+      assert.equal((await request('/api/auth/me')).body.usuario.acesso, account.acesso);
+    }
+  }
+});
+
+test('nome duplicado não autentica conta ambígua', async () => {
+  const duplicate = { ...deliverer, id: 10 };
+  const originalExecute = db.execute;
+  db.execute = async (sql, params = []) => sql.includes('FROM usuarios WHERE nome') && params[0] === duplicate.nome
+    ? [[{ ...deliverer, senha_hash: delivererHash }, { ...duplicate, senha_hash: delivererHash }]]
+    : originalExecute(sql, params);
+  cookie = '';
+  const result = await login(duplicate.nome);
+  assert.equal(result.response.status, 401);
+  db.execute = originalExecute;
 });
 
 test('senha incorreta e usuário inexistente recebem erro genérico', async () => {
@@ -87,7 +128,7 @@ test('entradas inválidas são recusadas', async () => {
     body: JSON.stringify({ email: 'inválido', senha: '' })
   });
   assert.equal(response.status, 400);
-  assert.match(body.erro, /e-mail válido/i);
+  assert.match(body.erro, /e-mail ou nome/i);
 });
 
 test('sessão válida atende /me; sessão inexistente recebe 401', async () => {

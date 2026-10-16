@@ -66,20 +66,26 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
   });
 
   app.post('/api/auth/login', csrfGuard, loginLimiter, async (req, res, next) => {
-    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const identification = typeof req.body?.identificador === 'string'
+      ? req.body.identificador.trim()
+      : typeof req.body?.email === 'string' ? req.body.email.trim() : '';
     const senha = typeof req.body?.senha === 'string' ? req.body.senha : '';
-    if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !senha || Buffer.byteLength(senha, 'utf8') > 72) {
-      return res.status(400).json({ erro: 'Informe um e-mail válido e uma senha.' });
+    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identification);
+    if (!identification || identification.length > (isEmail ? 254 : 150) || !senha || Buffer.byteLength(senha, 'utf8') > 72) {
+      return res.status(400).json({ erro: 'Informe um e-mail ou nome de usuário e uma senha.' });
     }
 
     try {
-      const [rows] = await db.execute(
-        `SELECT ${PUBLIC_USER}, senha_hash FROM usuarios WHERE email = ? LIMIT 1`,
-        [email]
-      );
-      const user = rows[0];
+      const normalized = isEmail ? identification.toLowerCase() : identification;
+      const [rows] = await db.execute(isEmail
+        ? `SELECT ${PUBLIC_USER}, senha_hash FROM usuarios WHERE email = ? LIMIT 1`
+        : `SELECT ${PUBLIC_USER}, senha_hash FROM usuarios WHERE nome = ? LIMIT 2`,
+      [normalized]);
+      // A full name is the existing account name. Reject ambiguous matches rather
+      // than authenticating the wrong account when legacy data contains duplicates.
+      const user = rows.length === 1 ? rows[0] : null;
       const valid = user && await bcrypt.compare(senha, user.senha_hash);
-      if (!valid) return res.status(401).json({ erro: 'E-mail ou senha inválidos.' });
+      if (!valid) return res.status(401).json({ erro: 'Identificação ou senha inválidos.' });
 
       req.session.regenerate((error) => {
         if (error) return next(error);
@@ -130,6 +136,8 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
     const nome = typeof body.nome === 'string' ? body.nome.trim() : '';
     if (!nome || nome.length > 150) return res.status(400).json({ erro: 'Informe um nome com até 150 caracteres.' });
     try {
+      const [duplicates] = await db.execute('SELECT id FROM usuarios WHERE nome = ? AND id <> ? LIMIT 1', [nome, req.session.userId]);
+      if (duplicates.length) return res.status(409).json({ erro: 'Já existe uma conta com este nome. Escolha um nome diferente para permitir o login.' });
       await db.execute('UPDATE usuarios SET nome = ? WHERE id = ?', [nome, req.session.userId]);
       const [rows] = await db.execute(`SELECT ${PUBLIC_USER} FROM usuarios WHERE id = ? LIMIT 1`, [req.session.userId]);
       if (!rows[0]) return res.status(401).json({ erro: 'Sessão inválida.' });
@@ -213,6 +221,8 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
         const [targetRows] = await executor.execute(`SELECT ${PUBLIC_USER} FROM usuarios WHERE id = ? LIMIT 1 FOR UPDATE`, [req.params.id]);
         const target = targetRows[0];
         if (!target) { if (connection) await connection.rollback(); return res.status(404).json({ erro: 'Usuário não encontrado.' }); }
+        const [nameDuplicates] = await executor.execute('SELECT id FROM usuarios WHERE nome = ? AND id <> ? LIMIT 1', [nome, req.params.id]);
+        if (nameDuplicates.length) { if (connection) await connection.rollback(); return res.status(409).json({ erro: 'Já existe uma conta com este nome. Escolha um nome diferente para permitir o login.' }); }
         if (target.acesso === 'administrador' && acesso !== 'administrador') {
           const [admins] = await executor.execute("SELECT id FROM usuarios WHERE acesso = 'administrador' FOR UPDATE");
           if (admins.length <= 1) { if (connection) await connection.rollback(); return res.status(409).json({ erro: 'Não é possível rebaixar o último administrador ativo.' }); }
@@ -338,6 +348,8 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
         await connection.beginTransaction();
         const [existing] = await connection.execute('SELECT id FROM usuarios WHERE email = ? LIMIT 1 FOR UPDATE', [parsed.value.email]);
         if (existing.length) { await connection.rollback(); return res.status(409).json({ erro: 'Este e-mail já está vinculado a uma conta do sistema.' }); }
+        const [nameDuplicates] = await connection.execute('SELECT id FROM usuarios WHERE nome = ? LIMIT 1 FOR UPDATE', [parsed.value.nome]);
+        if (nameDuplicates.length) { await connection.rollback(); return res.status(409).json({ erro: 'Já existe uma conta com este nome. Escolha um nome diferente para permitir o login.' }); }
         const randomPassword = crypto.randomBytes(32).toString('base64url');
         const passwordHash = await bcrypt.hash(randomPassword, 12);
         const [userResult] = await connection.execute("INSERT INTO usuarios (nome, email, senha_hash, acesso) VALUES (?, ?, ?, 'entregador')", [parsed.value.nome, parsed.value.email, passwordHash]);
@@ -367,6 +379,16 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
         const [currentRows] = await connection.execute('SELECT id, usuario_id FROM entregadores WHERE id = ? LIMIT 1 FOR UPDATE', [req.params.id]);
         if (!currentRows[0]) { await connection.rollback(); return res.status(404).json({ erro: 'Entregador não encontrado.' }); }
         const current = currentRows[0];
+        if (parsed.value.nome && current.usuario_id) {
+          const [nameDuplicates] = await connection.execute('SELECT id FROM usuarios WHERE nome = ? AND id <> ? LIMIT 1 FOR UPDATE', [parsed.value.nome, current.usuario_id]);
+          if (nameDuplicates.length) { await connection.rollback(); return res.status(409).json({ erro: 'Já existe uma conta com este nome. Escolha um nome diferente para permitir o login.' }); }
+        }
+        if (!current.usuario_id && parsed.value.email) {
+          const [nameRows] = await connection.execute('SELECT nome FROM entregadores WHERE id = ? LIMIT 1', [req.params.id]);
+          const loginName = parsed.value.nome || nameRows[0]?.nome;
+          const [nameDuplicates] = await connection.execute('SELECT id FROM usuarios WHERE nome = ? LIMIT 1 FOR UPDATE', [loginName]);
+          if (nameDuplicates.length) { await connection.rollback(); return res.status(409).json({ erro: 'Já existe uma conta com este nome. Escolha um nome diferente para permitir o login.' }); }
+        }
         if (!current.usuario_id && !parsed.value.email) { await connection.rollback(); return res.status(400).json({ erro: 'Informe um e-mail válido para vincular a conta deste entregador.' }); }
         if (current.usuario_id && parsed.value.email) {
           const [duplicates] = await connection.execute('SELECT id FROM usuarios WHERE email = ? AND id <> ? LIMIT 1', [parsed.value.email, current.usuario_id]);

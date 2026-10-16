@@ -30,7 +30,7 @@ function Brand({ compact = false }) {
 }
 
 function Login({ onLogin }) {
-  const [email, setEmail] = useState('')
+  const [identificador, setIdentificador] = useState('')
   const [senha, setSenha] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -39,12 +39,12 @@ function Login({ onLogin }) {
   async function submit(event) {
     event.preventDefault()
     setError('')
-    if (!email.trim() || !senha) { setError('Preencha o e-mail e a senha.'); return }
+    if (!identificador.trim() || !senha) { setError('Preencha o e-mail ou nome de usuário e a senha.'); return }
     setLoading(true)
     try {
       const { csrfToken } = await api('/auth/csrf')
       const result = await api('/auth/login', {
-        method: 'POST', headers: { 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ email, senha }),
+        method: 'POST', headers: { 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ identificador, senha }),
       })
       onLogin(result.usuario, result.csrfToken)
     } catch (requestError) { setError(requestError.message) }
@@ -67,8 +67,8 @@ function Login({ onLogin }) {
         <div className="mobile-brand"><Brand /></div>
         <div className="form-heading"><span className="section-label">ACESSO À PLATAFORMA</span><h2 id="login-title">Boas-vindas</h2><p>Entre com seus dados para continuar.</p></div>
         <form onSubmit={submit} noValidate>
-          <label htmlFor="email">E-mail</label>
-          <input id="email" type="email" autoComplete="username" placeholder="voce@empresa.com" value={email} onChange={(event) => setEmail(event.target.value)} disabled={loading} />
+          <label htmlFor="email">E-mail ou nome de usuário</label>
+          <input id="email" type="text" autoComplete="username" placeholder="Digite seu e-mail ou nome de usuário" value={identificador} onChange={(event) => setIdentificador(event.target.value)} disabled={loading} />
           <label htmlFor="password">Senha</label>
           <div className="password-wrap"><input id="password" type={showPassword ? 'text' : 'password'} autoComplete="current-password" placeholder="Digite sua senha" value={senha} onChange={(event) => setSenha(event.target.value)} disabled={loading} />
             <button className="show-password" type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'} disabled={loading}>{showPassword ? 'Ocultar' : 'Mostrar'}</button>
