@@ -36,7 +36,7 @@ const mockDb = {
         if (sql.includes('e.criado_em < DATE_ADD')) index++;
         if (sql.includes('e.descricao LIKE ?')) { const q = params[index].slice(1, -1).toLowerCase(); selected = selected.filter((item) => item.descricao.toLowerCase().includes(q) || clients.find((c) => c.id === item.cliente_id)?.nome.toLowerCase().includes(q) || deliverers.find((d) => d.id === item.entregador_id)?.nome.toLowerCase().includes(q)); }
       }
-      const projected = selected.map((item) => ({ ...item, cliente_nome: clients.find((client) => client.id === item.cliente_id)?.nome, cliente_cpf: clients.find((client) => client.id === item.cliente_id)?.cpf, entregador_nome: deliverers.find((deliverer) => deliverer.id === item.entregador_id)?.nome, entregador_cpf: deliverers.find((deliverer) => deliverer.id === item.entregador_id)?.cpf }));
+      const projected = selected.map((item) => ({ ...item, cliente_nome: clients.find((client) => client.id === item.cliente_id)?.nome, cliente_cpf: clients.find((client) => client.id === item.cliente_id)?.cpf, entregador_nome: deliverers.find((deliverer) => deliverer.id === item.entregador_id)?.nome || null, entregador_cpf: deliverers.find((deliverer) => deliverer.id === item.entregador_id)?.cpf || null }));
       return [sql.includes('ORDER BY e.criado_em DESC') ? projected.reverse() : projected];
     }
     if (sql.includes('FROM historico_status_entregas h')) return [[...history.filter((event) => String(event.entrega_id) === String(params[0])).reverse().map((event) => ({ ...event, usuario_nome: users.find((user) => user.id === event.usuario_id)?.nome || null }))]];
@@ -137,6 +137,36 @@ test('cria com vínculos válidos, valida obrigatórios e força status inicial 
   assert.equal(historical.endereco_destino, 'Rua ajustada'); assert.equal(historical.setor_destino, 'Centro');
   assert.equal(historical.numero_destino, '55');
   assert.equal(historical.cidade_destino, 'São Paulo'); assert.equal(historical.estado_destino, 'SP');
+});
+
+test('cria entrega sem entregador, lista e detalha como aguardando, permite atribuir e remover', async () => {
+  await login('admin@example.com');
+  const created = await createDelivery({ entregador_id: undefined });
+  assert.equal(created.response.status, 201);
+  assert.equal(created.body.entrega.entregador_id, null);
+  assert.equal(created.body.entrega.entregador_nome, null);
+  assert.equal(created.body.entrega.status, 'na_farmacia');
+
+  const listed = await request('/api/deliveries');
+  assert.equal(listed.response.status, 200);
+  assert.equal(listed.body.length, 1);
+  assert.equal(listed.body[0].entregador_id, null);
+  const detail = await request('/api/deliveries/1');
+  assert.equal(detail.response.status, 200);
+  assert.equal(detail.body.entrega.entregador_id, null);
+  const summary = await request('/api/deliveries/summary');
+  assert.equal(summary.body.total, 1);
+  assert.equal(summary.body.statuses.na_farmacia, 1);
+
+  assert.equal((await mutate('PATCH', '/api/deliveries/1', { entregador_id: 999 })).response.status, 404);
+  const assigned = await mutate('PATCH', '/api/deliveries/1', { entregador_id: 201 });
+  assert.equal(assigned.response.status, 200);
+  assert.equal(assigned.body.entrega.entregador_id, 201);
+  assert.equal(assigned.body.entrega.entregador_nome, 'Entregador Teste');
+  const unassigned = await mutate('PATCH', '/api/deliveries/1', { entregador_id: '' });
+  assert.equal(unassigned.response.status, 200);
+  assert.equal(unassigned.body.entrega.entregador_id, null);
+  assert.equal((await mutate('PATCH', '/api/deliveries/1', { entregador_id: null })).body.entrega.entregador_id, null);
 });
 
 test('lista com filtros, retorna detalhes e histórico, aplica transições permitidas', async () => {

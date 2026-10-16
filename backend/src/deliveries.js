@@ -9,7 +9,7 @@ const DELIVERY_SELECT = `SELECT e.id, e.cliente_id, e.entregador_id, e.descricao
   c.nome AS cliente_nome, c.cpf AS cliente_cpf,
   en.nome AS entregador_nome, en.cpf AS entregador_cpf
   FROM entregas e JOIN clientes c ON c.id = e.cliente_id
-  JOIN entregadores en ON en.id = e.entregador_id`;
+  LEFT JOIN entregadores en ON en.id = e.entregador_id`;
 const DESTINATION_FIELDS = ['cep_destino', 'endereco_destino', 'quadra_destino', 'lote_destino', 'numero_destino', 'setor_destino', 'cidade_destino', 'estado_destino'];
 const OPTIONAL_LENGTHS = { endereco_destino: 255, quadra_destino: 50, lote_destino: 50, numero_destino: 30, setor_destino: 120, cidade_destino: 100, observacoes: 5000 };
 const BRAZILIAN_STATES = new Set('AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' '));
@@ -105,7 +105,9 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
     const allowed = new Set(['cliente_id', 'entregador_id', 'descricao', 'status', ...DESTINATION_FIELDS, 'observacoes']);
     if (Object.keys(body).some((key) => !allowed.has(key))) return res.status(400).json({ erro: 'Envie somente os campos permitidos da entrega.' });
     if (!validId(body.cliente_id)) return res.status(400).json({ erro: 'Selecione um cliente válido.' });
-    if (!validId(body.entregador_id)) return res.status(400).json({ erro: 'Selecione um entregador válido.' });
+    const entregadorId = body.entregador_id == null || (typeof body.entregador_id === 'string' && !body.entregador_id.trim())
+      ? null : body.entregador_id;
+    if (entregadorId !== null && !validId(entregadorId)) return res.status(400).json({ erro: 'Selecione um entregador válido.' });
     if (body.status !== undefined && !DELIVERY_STATUSES.includes(body.status)) return res.status(400).json({ erro: 'Status de entrega inválido.' });
     const descricao = typeof body.descricao === 'string' ? body.descricao.trim() : '';
     if (!descricao || descricao.length > 500) return res.status(400).json({ erro: 'Informe uma descrição com até 500 caracteres.' });
@@ -116,8 +118,10 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
       connection = await db.getConnection(); await connection.beginTransaction();
       const [clientRows] = await connection.execute('SELECT id, cep, endereco, numero, quadra, lote, setor, cidade, estado FROM clientes WHERE id = ? LIMIT 1 FOR UPDATE', [body.cliente_id]);
       if (!clientRows[0]) { await connection.rollback(); return res.status(404).json({ erro: 'Cliente selecionado não encontrado.' }); }
-      const [delivererRows] = await connection.execute('SELECT id FROM entregadores WHERE id = ? LIMIT 1 FOR UPDATE', [body.entregador_id]);
-      if (!delivererRows[0]) { await connection.rollback(); return res.status(404).json({ erro: 'Entregador selecionado não encontrado.' }); }
+      if (entregadorId !== null) {
+        const [delivererRows] = await connection.execute('SELECT id FROM entregadores WHERE id = ? LIMIT 1 FOR UPDATE', [entregadorId]);
+        if (!delivererRows[0]) { await connection.rollback(); return res.status(404).json({ erro: 'Entregador selecionado não encontrado.' }); }
+      }
       const client = clientRows[0];
       const snapshot = {
         cep_destino: Object.hasOwn(parsed.value, 'cep_destino') ? parsed.value.cep_destino : client.cep,
@@ -131,7 +135,7 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
         observacoes: parsed.value.observacoes ?? null,
       };
       const fields = ['cliente_id', 'entregador_id', 'descricao', 'status', ...DESTINATION_FIELDS, 'observacoes'];
-      const params = [body.cliente_id, body.entregador_id, descricao, 'na_farmacia', ...DESTINATION_FIELDS.map((field) => snapshot[field]), snapshot.observacoes];
+      const params = [body.cliente_id, entregadorId, descricao, 'na_farmacia', ...DESTINATION_FIELDS.map((field) => snapshot[field]), snapshot.observacoes];
       const [result] = await connection.execute(`INSERT INTO entregas (${fields.join(', ')}) VALUES (${fields.map(() => '?').join(', ')})`, params);
       await connection.execute('INSERT INTO historico_status_entregas (entrega_id, status_anterior, status_novo, usuario_id) VALUES (?, NULL, ?, ?)', [result.insertId, 'na_farmacia', req.user?.id || null]);
       const [createdRows] = await connection.execute(`${DELIVERY_SELECT} WHERE e.id = ? LIMIT 1`, [result.insertId]);
@@ -155,16 +159,19 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
       if (typeof body.descricao !== 'string' || !body.descricao.trim() || body.descricao.trim().length > 500) return res.status(400).json({ erro: 'Informe uma descrição com até 500 caracteres.' });
       parsed.value.descricao = body.descricao.trim();
     }
-    if (Object.hasOwn(body, 'entregador_id') && !validId(body.entregador_id)) return res.status(400).json({ erro: 'Selecione um entregador válido.' });
+    const hasDeliverer = Object.hasOwn(body, 'entregador_id');
+    const entregadorId = !hasDeliverer || body.entregador_id == null || (typeof body.entregador_id === 'string' && !body.entregador_id.trim())
+      ? null : body.entregador_id;
+    if (hasDeliverer && entregadorId !== null && !validId(entregadorId)) return res.status(400).json({ erro: 'Selecione um entregador válido.' });
     try {
       const [currentRows] = await db.execute('SELECT id, status FROM entregas WHERE id = ? LIMIT 1', [req.params.id]);
       if (!currentRows[0]) return res.status(404).json({ erro: 'Entrega não encontrada.' });
       if (['concluida', 'cancelada'].includes(currentRows[0].status)) return res.status(409).json({ erro: 'Entregas concluídas ou canceladas não podem ser editadas.' });
-      if (Object.hasOwn(body, 'entregador_id')) {
-        const [deliverers] = await db.execute('SELECT id FROM entregadores WHERE id = ? LIMIT 1', [body.entregador_id]);
+      if (hasDeliverer && entregadorId !== null) {
+        const [deliverers] = await db.execute('SELECT id FROM entregadores WHERE id = ? LIMIT 1', [entregadorId]);
         if (!deliverers[0]) return res.status(404).json({ erro: 'Entregador selecionado não encontrado.' });
-        parsed.value.entregador_id = body.entregador_id;
       }
+      if (hasDeliverer) parsed.value.entregador_id = entregadorId;
       const fields = Object.keys(parsed.value);
       await db.execute(`UPDATE entregas SET ${fields.map((field) => `${field} = ?`).join(', ')} WHERE id = ?`, [...fields.map((field) => parsed.value[field]), req.params.id]);
       const [rows] = await db.execute(`${DELIVERY_SELECT} WHERE e.id = ? LIMIT 1`, [req.params.id]);

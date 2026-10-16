@@ -37,3 +37,11 @@ test('conclusão e cancelamento recarregam os detalhes sem exigir atualização 
   assert.match(statusAction, /if \(detail\) await openDetail\(deliveryId\)/)
   assert.match(cancelAction, /if \(detail\) await openDetail\(deliveryId\)/)
 })
+
+test('cadastro aceita entrega sem entregador e indica a atribuição pendente na lista e no detalhe', () => {
+  const saveAction = source.slice(source.indexOf('async function save'), source.indexOf('async function openDetail'))
+  assert.doesNotMatch(saveAction, /!form\.entregador_id/)
+  assert.match(source, /endpoint="\/deliverers" label="Entregador"[^>]*onExpired=\{onExpired\} \/>/)
+  assert.match(source, /item\.entregador_nome \|\| "Aguardando entregador"/)
+  assert.match(source, /detail\.entrega\.entregador_nome \? `\$\{detail\.entrega\.entregador_nome\} · #\$\{detail\.entrega\.entregador_id\}` : "Aguardando entregador"/)
+})
