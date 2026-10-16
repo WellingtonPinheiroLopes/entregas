@@ -575,7 +575,8 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
 
   app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada.', caminho: req.path }));
   app.use((error, req, res, next) => {
-    console.error('Erro interno:', error.code || 'erro inesperado');
+    const detail = error.code === 'ER_DUP_ENTRY' ? 'violação de unicidade' : (error.message || 'erro inesperado');
+    console.error('Erro interno:', error.code || 'erro inesperado', detail);
     if (res.headersSent) return next(error);
     res.status(500).json({ erro: 'Ocorreu um erro interno no servidor.' });
   });
