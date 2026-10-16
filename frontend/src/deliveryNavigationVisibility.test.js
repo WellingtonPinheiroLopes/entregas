@@ -4,7 +4,21 @@ import { readFile } from 'node:fs/promises'
 import { canTraceDelivery } from './deliveryNavigation.js'
 
 const source = await readFile(new URL('./Deliveries.jsx', import.meta.url), 'utf8')
+const recordSearchSource = await readFile(new URL('./RecordSearch.jsx', import.meta.url), 'utf8')
 const backendSource = await readFile(new URL('../../backend/src/deliveries.js', import.meta.url), 'utf8')
+
+test('clientes e entregadores exibem nomes sem IDs técnicos, mantendo IDs para seleção e gravação', () => {
+  assert.doesNotMatch(recordSearchSource, /selected\.nome\} · #\$\{selected\.id\}/)
+  assert.doesNotMatch(recordSearchSource, /<span>#\$\{record\.id\}/)
+  assert.match(recordSearchSource, /key=\{record\.id\}/)
+  assert.match(recordSearchSource, /onClick=\{\(\) => select\(record\)\}/)
+  assert.doesNotMatch(source, /#\$\{item\.cliente_id\}|#\$\{item\.entregador_id\}/)
+  assert.doesNotMatch(source, /· #\$\{detail\.entrega\.cliente_id\}|· #\$\{detail\.entrega\.entregador_id\}/)
+  assert.match(source, /cliente_id: String\(client\.id\)/)
+  assert.match(source, /entregador_id: String\(deliverer\.id\)/)
+  assert.match(source, /JSON\.stringify\(payload\)/)
+  assert.match(source, /Entrega #\$\{detail\.entrega\.id\}/)
+})
 
 test('navegação também exige que a entrega esteja atribuída ao usuário atual', () => {
   assert.match(source, /const terminal = detail && \['concluida', 'cancelada'\]\.includes\(detail\.entrega\.status\)/)

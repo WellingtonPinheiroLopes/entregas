@@ -79,7 +79,7 @@ export default function RecordSearch({ api, endpoint, label, query, selected, on
       onKeyDown={handleKeyDown}
       onChange={(event) => { onQueryChange(event.target.value); setOpen(true); setError(''); setResults([]); setLoading(false) }}
     />
-    {selected && <small className="record-search-selected" role="status">Selecionado: {selected.nome} · #{selected.id}{details(selected) ? ` · ${details(selected)}` : ''}</small>}
+    {selected && <small className="record-search-selected" role="status">Selecionado: {selected.nome}{details(selected) ? ` · ${details(selected)}` : ''}</small>}
     {selected && !disabled && <button className="record-search-clear" type="button" onClick={() => onQueryChange('')} aria-label={`Limpar ${label.toLocaleLowerCase('pt-BR')} selecionado`}>Limpar seleção</button>}
     {showList && <div className="record-search-results" id={listId} role="listbox" aria-label={`Sugestões de ${label.toLocaleLowerCase('pt-BR')}`}>
       {loading && <p className="record-search-message" role="status">Pesquisando...</p>}
@@ -96,7 +96,7 @@ export default function RecordSearch({ api, endpoint, label, query, selected, on
         onMouseEnter={() => setActiveIndex(index)}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => select(record)}
-      ><strong>{record.nome}</strong><span>#{record.id}{details(record) ? ` · ${details(record)}` : ''}</span></button>)}
+      ><strong>{record.nome}</strong>{details(record) && <span>{details(record)}</span>}</button>)}
     </div>}
   </div>
 }
