@@ -2,6 +2,7 @@
 
 const DELIVERY_STATUSES = ['na_farmacia', 'em_transito', 'concluida', 'cancelada'];
 const STATUS_LABELS = { na_farmacia: 'Na farmácia', em_transito: 'Em trânsito', concluida: 'Concluída', cancelada: 'Cancelada' };
+const { createNewDeliveryNotifications } = require('./notifications');
 const DELIVERY_SELECT = `SELECT e.id, e.cliente_id, e.entregador_id, e.descricao, e.status,
   e.cep_destino, e.endereco_destino, e.quadra_destino, e.lote_destino, e.numero_destino,
   e.setor_destino, e.cidade_destino, e.estado_destino, e.observacoes, e.motivo_cancelamento,
@@ -199,6 +200,7 @@ function registerDeliveryRoutes(app, { db, csrfGuard, authenticate, requireAcces
       const [result] = await connection.execute(`INSERT INTO entregas (${fields.join(', ')}) VALUES (${fields.map(() => '?').join(', ')})`, params);
       await connection.execute('INSERT INTO historico_status_entregas (entrega_id, status_anterior, status_novo, usuario_id) VALUES (?, NULL, ?, ?)', [result.insertId, 'na_farmacia', req.user?.id || null]);
       const [createdRows] = await connection.execute(`${DELIVERY_SELECT} WHERE e.id = ? LIMIT 1`, [result.insertId]);
+      await createNewDeliveryNotifications(connection, result.insertId);
       await connection.commit();
       res.status(201).json({ entrega: createdRows[0], mensagem: 'Entrega cadastrada com status Na farmácia.' });
     } catch (error) {

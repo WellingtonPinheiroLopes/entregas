@@ -15,12 +15,36 @@ const clients = [{ id: 101, nome: 'Cliente Teste', cpf: '52998224725', cep: '010
 const deliverers = [{ id: 201, nome: 'Entregador Teste', cpf: '11122233344', email: 'driver@example.com', usuario_id: 3 }, { id: 202, nome: 'Entregador Outro', cpf: '11122233345', email: 'driver2@example.com', usuario_id: 4 }];
 let deliveries = [];
 let history = [];
+let notifications = [];
 let nextDeliveryId = 1;
 let nextHistoryId = 1;
+let nextNotificationId = 1;
 let failDeliveryQuery = false;
+let failCommit = false;
 const clone = (value) => structuredClone(value);
 const mockDb = {
   async execute(sql, params = []) {
+    if (sql.startsWith('INSERT INTO notificacoes')) {
+      for (const user of users.filter((item) => item.acesso === 'entregador' && deliverers.some((entry) => String(entry.usuario_id) === String(item.id)))) {
+        if (!notifications.some((item) => String(item.usuario_id) === String(user.id) && item.tipo === params[0] && String(item.entrega_id) === String(params[2]))) {
+          notifications.push({ id: nextNotificationId++, usuario_id: user.id, tipo: params[0], mensagem: params[1], entrega_id: params[2], criado_em: '2026-10-15 10:00:00', lida_em: null });
+        }
+      }
+      return [{ affectedRows: 2 }];
+    }
+    if (sql.includes('FROM notificacoes WHERE usuario_id = ? ORDER BY')) return [[...notifications.filter((item) => String(item.usuario_id) === String(params[0])).sort((a, b) => b.id - a.id).slice(0, 50).map(({ id, tipo, mensagem, criado_em, lida_em }) => ({ id, tipo, mensagem, criado_em, lida_em }))]];
+    if (sql.includes('COUNT(*) AS total FROM notificacoes')) return [[{ total: notifications.filter((item) => String(item.usuario_id) === String(params[0]) && item.lida_em == null).length }]];
+    if (sql.startsWith('UPDATE notificacoes SET lida_em = CURRENT_TIMESTAMP WHERE usuario_id = ?')) {
+      const changed = notifications.filter((item) => String(item.usuario_id) === String(params[0]) && item.lida_em == null);
+      changed.forEach((item) => { item.lida_em = '2026-10-15 11:00:00'; });
+      return [{ affectedRows: changed.length }];
+    }
+    if (sql.startsWith('UPDATE notificacoes SET lida_em = CURRENT_TIMESTAMP WHERE id = ? AND usuario_id = ?')) {
+      const item = notifications.find((entry) => String(entry.id) === String(params[0]) && String(entry.usuario_id) === String(params[1]) && entry.lida_em == null);
+      if (item) item.lida_em = '2026-10-15 11:00:00';
+      return [{ affectedRows: item ? 1 : 0 }];
+    }
+    if (sql.startsWith('SELECT id FROM notificacoes WHERE id = ? AND usuario_id = ?')) return [[...notifications.filter((item) => String(item.id) === String(params[0]) && String(item.usuario_id) === String(params[1])).map(({ id }) => ({ id }))]];
     if (sql.includes('FROM usuarios WHERE email')) return [[...users.filter((user) => user.email === params[0])]];
     if (sql.includes('FROM usuarios WHERE id')) return [[...users.filter((user) => String(user.id) === String(params[0]))]];
     if (sql.includes('FROM clientes WHERE id')) return [[...clients.filter((client) => String(client.id) === String(params[0]))]];
@@ -85,9 +109,9 @@ const mockDb = {
     let snapshot;
     return {
       execute: (...args) => mockDb.execute(...args),
-      async beginTransaction() { snapshot = { deliveries: clone(deliveries), history: clone(history), nextDeliveryId, nextHistoryId }; },
-      async commit() {},
-      async rollback() { if (snapshot) { deliveries = snapshot.deliveries; history = snapshot.history; nextDeliveryId = snapshot.nextDeliveryId; nextHistoryId = snapshot.nextHistoryId; } },
+      async beginTransaction() { snapshot = { deliveries: clone(deliveries), history: clone(history), notifications: clone(notifications), nextDeliveryId, nextHistoryId, nextNotificationId }; },
+      async commit() { if (failCommit) { const error = new Error('commit failed'); error.code = 'ECONNREFUSED'; throw error; } },
+      async rollback() { if (snapshot) { deliveries = snapshot.deliveries; history = snapshot.history; notifications = snapshot.notifications; nextDeliveryId = snapshot.nextDeliveryId; nextHistoryId = snapshot.nextHistoryId; nextNotificationId = snapshot.nextNotificationId; } },
       release() {},
     };
   },
@@ -118,7 +142,7 @@ before(async () => {
   const app = createApp({ db: mockDb, sessionStore: new session.MemoryStore(), testing: true });
   server = app.listen(0, '127.0.0.1'); await new Promise((resolve) => server.once('listening', resolve)); baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
-beforeEach(() => { deliveries = []; history = []; nextDeliveryId = 1; nextHistoryId = 1; failDeliveryQuery = false; Object.assign(clients[0], { cep: '01001000', endereco: 'Rua Original', numero: '55', quadra: 'Q1', lote: 'L2', setor: 'Centro', cidade: 'São Paulo', estado: 'SP' }); cookie = ''; });
+beforeEach(() => { deliveries = []; history = []; notifications = []; nextDeliveryId = 1; nextHistoryId = 1; nextNotificationId = 1; failDeliveryQuery = false; failCommit = false; Object.assign(clients[0], { cep: '01001000', endereco: 'Rua Original', numero: '55', quadra: 'Q1', lote: 'L2', setor: 'Centro', cidade: 'São Paulo', estado: 'SP' }); cookie = ''; });
 after(async () => new Promise((resolve) => server.close(resolve)));
 
 test('API de entregas exige autenticação, autorização administrativa e CSRF', async () => {
@@ -329,4 +353,63 @@ test('filtra datas, trata entrega inexistente e erro de banco sem expor detalhes
   failDeliveryQuery = true;
   const failed = await request('/api/deliveries');
   assert.equal(failed.response.status, 500); assert.doesNotMatch(JSON.stringify(failed.body), /ECONNREFUSED|db offline/);
+});
+
+test('notifica todos os entregadores autorizados na criação, para entregas atribuídas e disponíveis', async () => {
+  await login('admin@example.com');
+  assert.equal((await createDelivery({ entregador_id: 201 })).response.status, 201);
+  assert.equal((await createDelivery({ entregador_id: null })).response.status, 201);
+  assert.equal(notifications.length, 4);
+  for (const userId of [3, 4]) {
+    const personal = notifications.filter((item) => item.usuario_id === userId);
+    assert.equal(personal.length, 2);
+    assert.ok(personal.every((item) => item.tipo === 'nova_entrega' && item.mensagem === 'Há uma nova entrega disponível.' && item.lida_em === null));
+  }
+  assert.equal(notifications.filter((item) => item.entrega_id === 1).length, 2);
+  assert.equal(notifications.filter((item) => item.entrega_id === 2).length, 2);
+  assert.equal((await request('/api/notifications')).body.notifications.length, 0, 'administrador não recebe a notificação específica de entregador');
+});
+
+test('notificações são privadas por usuário, contador e leitura respeitam o destinatário', async () => {
+  await login('admin@example.com'); await createDelivery({ entregador_id: 201 }); await createDelivery({ entregador_id: null });
+  cookie = ''; await login('driver@example.com');
+  let feed = await request('/api/notifications');
+  assert.equal(feed.response.status, 200); assert.equal(feed.body.unreadCount, 2); assert.equal(feed.body.notifications.length, 2);
+  assert.ok(feed.body.notifications.every((item) => item.mensagem === 'Há uma nova entrega disponível.' && !item.lida));
+  assert.ok(feed.body.notifications.every((item) => !Object.hasOwn(item, 'entrega_id') && !Object.hasOwn(item, 'endereco_destino')));
+  assert.equal((await request('/api/notifications/unread-count')).body.count, 2);
+  const first = feed.body.notifications[0].id;
+  const anotherOwnId = feed.body.notifications[1].id;
+  assert.equal((await request(`/api/notifications/${first}/read`, { method: 'PATCH' })).response.status, 403, 'mutação exige CSRF');
+  assert.equal((await mutate('PATCH', `/api/notifications/${first}/read`)).response.status, 200);
+  assert.equal((await request('/api/notifications/unread-count')).body.count, 1);
+  cookie = ''; await login('driver2@example.com');
+  const other = await request('/api/notifications');
+  assert.equal(other.body.notifications.length, 2); assert.equal(other.body.unreadCount, 2);
+  assert.equal((await mutate('PATCH', `/api/notifications/${first}/read`)).response.status, 404, 'não permite ler notificação alheia');
+  const second = other.body.notifications[0].id;
+  assert.equal((await mutate('PATCH', '/api/notifications/read-all')).response.status, 200);
+  assert.equal((await request('/api/notifications/unread-count')).body.count, 0);
+  assert.notEqual(notifications.find((item) => item.id === first).lida_em, null, 'a leitura feita pelo próprio usuário permanece');
+  assert.equal(notifications.find((item) => item.id === anotherOwnId).lida_em, null, 'a leitura do outro entregador não altera esta conta');
+  assert.notEqual(notifications.find((item) => item.id === second).lida_em, null);
+});
+
+test('falhas e rollback da criação não deixam notificações ou entregas parciais; edição/status não notificam', async () => {
+  await login('admin@example.com');
+  failDeliveryQuery = true;
+  assert.equal((await createDelivery()).response.status, 500);
+  assert.equal(deliveries.length, 0); assert.equal(notifications.length, 0);
+  failDeliveryQuery = false; failCommit = true;
+  assert.equal((await createDelivery()).response.status, 500);
+  assert.equal(deliveries.length, 0); assert.equal(history.length, 0); assert.equal(notifications.length, 0);
+  failCommit = false;
+  assert.equal((await createDelivery({ entregador_id: null })).response.status, 201);
+  assert.equal(notifications.length, 2);
+  const initialNotificationIds = notifications.map((item) => item.id);
+  await mutate('PATCH', '/api/deliveries/1', { descricao: 'Editada' });
+  await mutate('PATCH', '/api/deliveries/1/status', { status: 'em_transito' });
+  await mutate('PATCH', '/api/deliveries/1', { entregador_id: 201 });
+  assert.equal(notifications.length, 2);
+  assert.deepEqual(notifications.map((item) => item.id), initialNotificationIds);
 });

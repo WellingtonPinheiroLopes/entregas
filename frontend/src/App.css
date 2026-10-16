@@ -173,3 +173,26 @@ button:disabled { cursor: wait; opacity: .7; }.spinner { width: 17px; height: 17
 .deliverer-row-actions { display:flex; align-items:center; gap:6px; }.delete-deliverer-button { display:inline-flex; align-items:center; gap:5px; color:#a43c3c; }.delete-deliverer-button:hover { border-color:#e7b8b8; background:#fff5f4; }.delete-deliverer-button svg { width:15px; height:15px; }.delete-confirmation { width:min(100%,440px); text-align:center; }.delete-confirmation-icon { display:grid; place-items:center; width:48px; height:48px; margin:0 auto 14px; border-radius:15px; color:#a43c3c; background:#fff0ef; }.delete-confirmation-icon svg { width:25px; height:25px; }.delete-confirmation h2 { margin:0 0 10px; color:var(--green-900); font:700 22px/1.25 'Manrope',sans-serif; }.delete-confirmation>p { margin:0 0 10px; color:var(--muted); font-size:13px; line-height:1.55; }.delete-confirmation .delete-confirmation-name { color:var(--ink); font-size:15px; font-weight:700; }.delete-confirmation .account-actions { justify-content:center; margin-top:20px; }.danger-button { display:inline-flex; align-items:center; justify-content:center; gap:9px; min-height:44px; padding:0 18px; border:1px solid #a43c3c; border-radius:8px; color:#fff; background:#a43c3c; font-size:13px; font-weight:700; }.danger-button:hover:not(:disabled) { border-color:#842d2d; background:#842d2d; }
 @media (max-width:620px) { .deliverer-toolbar { align-items:stretch; flex-direction:column; }.deliverer-toolbar .account-submit { width:100%; }.deliverer-fields { grid-template-columns:1fr; gap:0; }.deliverer-modal { padding:24px 19px; } }
 @media (max-width:620px) { .topbar { height:auto; min-height:66px; flex-wrap:wrap; gap:8px; padding:10px 12px; }.topbar-right { flex:1 1 100%; justify-content:space-between; flex-wrap:wrap; }.topbar-right .nav-button { padding:7px 5px; font-size:10px; } }
+
+.notification-control { position:relative; display:flex; align-items:center; }
+.notification-trigger { position:relative; display:grid; place-items:center; width:38px; height:38px; padding:0; border:1px solid #dce6df; border-radius:50%; color:var(--green-800); background:#fff; }
+.notification-trigger:hover, .notification-trigger:focus-visible { border-color:#a8cbb4; background:#f4faf5; }
+.notification-trigger svg { width:19px; height:19px; }
+.notification-count { position:absolute; top:-5px; right:-6px; display:grid; place-items:center; min-width:18px; height:18px; padding:0 4px; border:2px solid #fff; border-radius:10px; color:#fff; background:#b53b36; font-size:9px; font-weight:700; line-height:1; }
+.notifications-popover { position:absolute; z-index:12; top:calc(100% + 12px); right:0; width:min(360px, calc(100vw - 24px)); max-height:min(440px, calc(100vh - 100px)); overflow:auto; border:1px solid var(--line); border-radius:12px; background:#fff; box-shadow:0 14px 40px #193c2820; }
+.notifications-heading { position:sticky; top:0; z-index:1; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px; border-bottom:1px solid #edf1ee; background:#fff; color:var(--green-900); font-size:13px; }
+.notifications-heading button, .notification-mark-read { padding:5px 0; border:0; color:var(--green-700); background:transparent; font-size:10px; font-weight:600; white-space:nowrap; }
+.notifications-list { margin:0; padding:0; list-style:none; }
+.notifications-list li { position:relative; border-bottom:1px solid #f0f3f1; }
+.notification-item { display:flex; width:100%; gap:11px; padding:14px 16px; border:0; color:var(--ink); background:#fff; text-align:left; }
+.notification-item:hover { background:#f7faf8; }
+.notification-item:not(.is-read) { background:#f6fbf7; }
+.notification-dot { flex:0 0 auto; width:8px; height:8px; margin-top:5px; border-radius:50%; background:#57a672; }
+.notification-item.is-read .notification-dot { background:#d7e1da; }
+.notification-copy { display:grid; gap:6px; min-width:0; }
+.notification-copy strong { font-size:12px; font-weight:600; line-height:1.45; }
+.notification-copy time { color:var(--muted); font-size:10px; }
+.notification-mark-read { position:absolute; right:15px; bottom:12px; }
+.notifications-empty, .notifications-error { margin:0; padding:24px 16px; color:var(--muted); font-size:12px; text-align:center; }
+.notifications-error { color:#a43c3c; }
+@media (max-width:520px) { .notifications-popover { position:fixed; top:118px; right:12px; width:calc(100vw - 24px); } .notification-trigger { width:34px; height:34px; } }
