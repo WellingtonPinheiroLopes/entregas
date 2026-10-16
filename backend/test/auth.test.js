@@ -12,6 +12,7 @@ const user = {
 };
 const admin = { ...user, id: 8, nome: 'Administradora', email: 'admin@example.com', acesso: 'administrador' };
 const deliverer = { ...user, id: 9, nome: 'Entregador Teste', email: 'entregador@example.com', acesso: 'entregador' };
+const emailOptional = { ...user, id: 10, nome: 'Sem Email', email: null, acesso: 'entregador' };
 let passwordHash;
 let adminHash;
 let delivererHash;
@@ -19,11 +20,13 @@ let server;
 let baseUrl;
 let cookie = '';
 let currentAccess = 'convidado';
+let emailLookups = 0;
 
 const db = {
   async execute(sql, params = []) {
-    const accounts = [user, admin, deliverer];
+    const accounts = [user, admin, deliverer, emailOptional];
     if (sql.includes('FROM usuarios WHERE email')) {
+      emailLookups += 1;
       const account = accounts.find((item) => item.email === params[0]);
       return [account ? [{ ...account, acesso: account.id === user.id ? currentAccess : account.acesso, senha_hash: account.id === user.id ? passwordHash : account.id === admin.id ? adminHash : delivererHash }] : []];
     }
@@ -96,6 +99,24 @@ test('admin e entregador entram com e-mail ou nome, e o perfil carregado é o da
       assert.equal(body.usuario.acesso, account.acesso);
       assert.equal((await request('/api/auth/me')).body.usuario.acesso, account.acesso);
     }
+  }
+});
+
+test('usuário sem e-mail entra pelo nome e mantém perfil e sessão', async () => {
+  cookie = '';
+  const { response, body } = await login(emailOptional.nome);
+  assert.equal(response.status, 200); assert.equal(body.usuario.id, emailOptional.id);
+  assert.equal(body.usuario.email, null); assert.equal(body.usuario.acesso, 'entregador');
+  assert.equal((await request('/api/auth/me')).body.usuario.acesso, 'entregador');
+  assert.equal((await request('/api/usuarios')).response.status, 403);
+});
+
+test('identificação vazia é recusada sem consultar e-mail', async () => {
+  const token = await getCsrf();
+  for (const identificador of ['', '   ']) {
+    const before = emailLookups;
+    const result = await request('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token }, body: JSON.stringify({ identificador, senha: 'senha-segura' }) });
+    assert.equal(result.response.status, 400); assert.equal(emailLookups, before);
   }
 });
 

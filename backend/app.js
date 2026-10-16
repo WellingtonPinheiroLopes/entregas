@@ -208,10 +208,13 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
     const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
     if (Object.keys(body).some((key) => !['nome', 'email', 'acesso'].includes(key))) return res.status(400).json({ erro: 'Envie somente nome, e-mail e tipo de acesso.' });
     const nome = typeof body.nome === 'string' ? body.nome.trim() : '';
-    const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+    const emailProvided = Object.hasOwn(body, 'email');
+    const rawEmail = body.email;
+    const email = typeof rawEmail === 'string' ? (rawEmail.trim().toLowerCase() || null) : rawEmail == null ? null : undefined;
     const acesso = body.acesso;
     if (!nome || nome.length > 150) return res.status(400).json({ erro: 'Informe um nome com até 150 caracteres.' });
-    if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ erro: 'Informe um e-mail válido.' });
+    if (emailProvided && email === undefined) return res.status(400).json({ erro: 'O e-mail deve ser texto ou nulo.' });
+    if (email && (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) return res.status(400).json({ erro: 'Informe um e-mail válido ou deixe o campo em branco.' });
     if (!['administrador', 'convidado', 'entregador'].includes(acesso)) return res.status(400).json({ erro: 'Tipo de acesso inválido.' });
     try {
       const connection = typeof db.getConnection === 'function' ? await db.getConnection() : null;
@@ -221,20 +224,26 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
         const [targetRows] = await executor.execute(`SELECT ${PUBLIC_USER} FROM usuarios WHERE id = ? LIMIT 1 FOR UPDATE`, [req.params.id]);
         const target = targetRows[0];
         if (!target) { if (connection) await connection.rollback(); return res.status(404).json({ erro: 'Usuário não encontrado.' }); }
+        const currentEmail = typeof target.email === 'string' ? (target.email.trim().toLowerCase() || null) : null;
+        const updatedEmail = emailProvided ? email : currentEmail;
         const [nameDuplicates] = await executor.execute('SELECT id FROM usuarios WHERE nome = ? AND id <> ? LIMIT 1', [nome, req.params.id]);
         if (nameDuplicates.length) { if (connection) await connection.rollback(); return res.status(409).json({ erro: 'Já existe uma conta com este nome. Escolha um nome diferente para permitir o login.' }); }
+        if (updatedEmail) {
+          const [emailDuplicates] = await executor.execute('SELECT id FROM usuarios WHERE email = ? AND id <> ? LIMIT 1', [updatedEmail, req.params.id]);
+          if (emailDuplicates.length) { if (connection) await connection.rollback(); return res.status(409).json({ erro: 'Já existe um usuário com este e-mail.' }); }
+        }
         if (target.acesso === 'administrador' && acesso !== 'administrador') {
           const [admins] = await executor.execute("SELECT id FROM usuarios WHERE acesso = 'administrador' FOR UPDATE");
           if (admins.length <= 1) { if (connection) await connection.rollback(); return res.status(409).json({ erro: 'Não é possível rebaixar o último administrador ativo.' }); }
         }
-        await executor.execute('UPDATE usuarios SET nome = ?, email = ?, acesso = ? WHERE id = ?', [nome, email, acesso, req.params.id]);
+        await executor.execute('UPDATE usuarios SET nome = ?, email = ?, acesso = ? WHERE id = ?', [nome, updatedEmail, acesso, req.params.id]);
         if (connection) await connection.commit();
         const [rows] = await db.execute(`SELECT ${PUBLIC_USER} FROM usuarios WHERE id = ? LIMIT 1`, [req.params.id]);
         res.set('Cache-Control', 'no-store').json({ usuario: rows[0], mensagem: 'Usuário atualizado com sucesso.' });
       } catch (error) { if (connection) await connection.rollback(); throw error; }
       finally { if (connection) connection.release(); }
     } catch (error) {
-      if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ erro: 'Já existe um usuário com este e-mail.' });
+      if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ erro: 'Já existe um usuário com este e-mail ou nome de login.' });
       next(error);
     }
   });
@@ -281,8 +290,10 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
       result.senhaInicial = body.senhaInicial;
     }
     if (!partial || Object.hasOwn(body, 'email')) {
-      const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
-      if (!validEmail(email)) return { error: 'Informe um e-mail válido.' };
+      if (body.email != null && typeof body.email !== 'string') return { error: 'O e-mail deve ser texto ou nulo.' };
+      const rawEmail = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+      const email = rawEmail || null;
+      if (email && !validEmail(email)) return { error: 'Informe um e-mail válido ou deixe o campo em branco.' };
       result.email = email;
     }
     // The access level is always assigned by the server; client values are ignored.
@@ -352,8 +363,10 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
       let delivererId;
       try {
         await connection.beginTransaction();
-        const [existing] = await connection.execute('SELECT id FROM usuarios WHERE email = ? LIMIT 1 FOR UPDATE', [parsed.value.email]);
-        if (existing.length) { await connection.rollback(); return res.status(409).json({ erro: 'Este e-mail já está vinculado a uma conta do sistema.' }); }
+        if (parsed.value.email) {
+          const [existing] = await connection.execute('SELECT id FROM usuarios WHERE email = ? LIMIT 1 FOR UPDATE', [parsed.value.email]);
+          if (existing.length) { await connection.rollback(); return res.status(409).json({ erro: 'Este e-mail já está vinculado a uma conta do sistema.' }); }
+        }
         const [nameDuplicates] = await connection.execute('SELECT id FROM usuarios WHERE nome = ? LIMIT 1 FOR UPDATE', [parsed.value.nome]);
         if (nameDuplicates.length) { await connection.rollback(); return res.status(409).json({ erro: 'Já existe uma conta com este nome. Escolha um nome diferente para permitir o login.' }); }
         const passwordHash = await bcrypt.hash(parsed.value.senhaInicial, 12);
@@ -394,8 +407,7 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
           const [nameDuplicates] = await connection.execute('SELECT id FROM usuarios WHERE nome = ? LIMIT 1 FOR UPDATE', [loginName]);
           if (nameDuplicates.length) { await connection.rollback(); return res.status(409).json({ erro: 'Já existe uma conta com este nome. Escolha um nome diferente para permitir o login.' }); }
         }
-        if (!current.usuario_id && !parsed.value.email) { await connection.rollback(); return res.status(400).json({ erro: 'Informe um e-mail válido para vincular a conta deste entregador.' }); }
-        if (current.usuario_id && parsed.value.email) {
+        if (current.usuario_id && Object.hasOwn(parsed.value, 'email') && parsed.value.email) {
           const [duplicates] = await connection.execute('SELECT id FROM usuarios WHERE email = ? AND id <> ? LIMIT 1', [parsed.value.email, current.usuario_id]);
           if (duplicates.length) { await connection.rollback(); return res.status(409).json({ erro: 'Este e-mail já está vinculado a outra conta do sistema.' }); }
         }
@@ -407,14 +419,16 @@ function createApp({ db, sessionStore = new MySQLSessionStore(db), testing = fal
           const passwordHash = await bcrypt.hash(randomPassword, 12);
           const [userResult] = await connection.execute("INSERT INTO usuarios (nome, email, senha_hash, acesso) VALUES (?, ?, ?, 'entregador')", [parsed.value.nome || nameRows[0].nome, parsed.value.email, passwordHash]);
           await connection.execute('UPDATE entregadores SET usuario_id = ? WHERE id = ?', [userResult.insertId, req.params.id]);
-        } else if (current.usuario_id && parsed.value.email) {
+        } else if (current.usuario_id && Object.hasOwn(parsed.value, 'email')) {
           if (parsed.value.nome) await connection.execute('UPDATE usuarios SET nome = ?, email = ? WHERE id = ?', [parsed.value.nome, parsed.value.email, current.usuario_id]);
           else await connection.execute('UPDATE usuarios SET email = ? WHERE id = ?', [parsed.value.email, current.usuario_id]);
         } else if (current.usuario_id && parsed.value.nome) {
           await connection.execute('UPDATE usuarios SET nome = ? WHERE id = ?', [parsed.value.nome, current.usuario_id]);
         }
         const fields = Object.keys(parsed.value).filter((field) => field !== 'email');
-        [result] = await connection.execute(`UPDATE entregadores SET ${fields.map((field) => `${field} = ?`).join(', ')} WHERE id = ?`, [...fields.map((field) => parsed.value[field]), req.params.id]);
+        result = fields.length
+          ? (await connection.execute(`UPDATE entregadores SET ${fields.map((field) => `${field} = ?`).join(', ')} WHERE id = ?`, [...fields.map((field) => parsed.value[field]), req.params.id]))[0]
+          : { affectedRows: 1 };
         await connection.commit();
       } catch (error) { await connection.rollback(); throw error; }
       finally { connection.release(); }

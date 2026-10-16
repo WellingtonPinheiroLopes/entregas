@@ -18,17 +18,19 @@ O backend usa sessões no servidor persistidas na tabela MySQL `sessoes`. O cook
 4. Em um terminal, inicie a API: `cd backend && npm install && npm run dev`.
 5. Em outro terminal, inicie o frontend: `cd frontend && npm install && npm run dev` e abra `http://localhost:5173`.
 
+Para bancos existentes, aplique também `migrations/011_optional_email_and_unique_login_name.sql` depois das migrações anteriores. Ela mantém o índice único de e-mail (MySQL permite vários `NULL` em um índice `UNIQUE`) e torna o nome de login único. O schema atual foi verificado sem nomes duplicados antes da criação desta migração.
+
 O proxy de desenvolvimento encaminha `/api` para `http://127.0.0.1:3000`. Defina `VITE_BACKEND_URL` se usar outro endereço. A origem da página precisa corresponder a `FRONTEND_ORIGIN` no `.env`.
 
 ### Rotas
 
 - `GET /api/auth/csrf`: cria/recupera token para operações POST.
-- `POST /api/auth/login`: recebe `{ "email": "...", "senha": "..." }` e o header `X-CSRF-Token`.
+- `POST /api/auth/login`: recebe `{ "identificador": "...", "senha": "..." }` e o header `X-CSRF-Token`; o identificador aceita e-mail ou nome de usuário. O e-mail é opcional nos cadastros.
 - `GET /api/auth/me`: retorna usuário e token CSRF da sessão atual, ou 401.
 - `POST /api/auth/logout`: requer cookie de sessão e `X-CSRF-Token`.
 - `GET /api/usuarios`: exige sessão de administrador.
 
-Para testar manualmente, use o formulário com um usuário já cadastrado; credenciais incorretas e e-mail inexistente mostram a mesma mensagem. Após entrar, o nome e nível de acesso aparecem na área de trabalho. Use **Sair** para encerrar a sessão; recarregar a página antes de sair confirma a recuperação da sessão pelo endpoint `/me`.
+Para testar manualmente, use o formulário com um usuário já cadastrado; credenciais incorretas e identificadores inexistentes mostram a mesma mensagem. Usuários sem e-mail entram com o nome de usuário. Após entrar, o nome e nível de acesso aparecem na área de trabalho. Use **Sair** para encerrar a sessão; recarregar a página antes de sair confirma a recuperação da sessão pelo endpoint `/me`.
 
 ### Verificações automatizadas
 

@@ -18,8 +18,8 @@ let nextUserId = 3;
 const publicUser = ({ senha_hash, ...user }) => user;
 const db = {
   async execute(sql, params = []) {
-    if (sql.includes('FROM usuarios WHERE email') && sql.includes('id <>')) return [[...users.filter((user) => user.email.toLowerCase() === String(params[0]).toLowerCase() && String(user.id) !== String(params[1]))]];
-    if (sql.includes('FROM usuarios WHERE email')) return [[...users.filter((user) => user.email.toLowerCase() === String(params[0]).toLowerCase())]];
+    if (sql.includes('FROM usuarios WHERE email') && sql.includes('id <>')) return [[...users.filter((user) => (user.email || '').toLowerCase() === String(params[0]).toLowerCase() && String(user.id) !== String(params[1]))]];
+    if (sql.includes('FROM usuarios WHERE email')) return [[...users.filter((user) => (user.email || '').toLowerCase() === String(params[0]).toLowerCase())]];
     if (sql.includes('FROM usuarios WHERE nome')) return [[...users.filter((user) => user.nome === String(params[0]))]];
     if (sql.startsWith('INSERT INTO usuarios')) { const row = { id: nextUserId++, nome: params[0], email: params[1], senha_hash: params[2], acesso: 'entregador' }; users.push(row); return [{ insertId: row.id }]; }
     if (sql.startsWith('UPDATE usuarios SET nome = ?, email = ?')) { const row = users.find((user) => String(user.id) === String(params[2])); if (row) { row.nome = params[0]; row.email = params[1]; } return [{ affectedRows: row ? 1 : 0 }]; }
@@ -78,6 +78,7 @@ async function mutate(method, path, payload) {
   return request(path, { method, headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token }, body: JSON.stringify(payload) });
 }
 before(async () => {
+  process.env.LOGIN_RATE_LIMIT = '100';
   users[0].senha_hash = await bcrypt.hash('admin-password', 4); users[1].senha_hash = await bcrypt.hash('guest-password', 4);
   const app = createApp({ db, sessionStore: new session.MemoryStore(), testing: true });
   server = app.listen(0, '127.0.0.1'); await new Promise((resolve) => server.once('listening', resolve)); baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -120,7 +121,7 @@ test('valida entrada, CPF e normaliza strings ao cadastrar', async () => {
   assert.equal(manual.response.status, 201); assert.equal(manual.body.entregador.cidade, null); assert.equal(manual.body.entregador.estado, null);
 });
 
-test('email obrigatório, válido, único; acesso é imposto no servidor e falha cria rollback', async () => {
+test('e-mail opcional e válido quando informado; acesso é imposto no servidor e falha cria rollback', async () => {
   cookie = ''; await login('admin@example.com');
   const payload = { nome: 'Novo Entregador', endereco: 'Rua A' };
   assert.equal((await mutate('POST', '/api/deliverers', payload)).response.status, 400);
@@ -146,6 +147,23 @@ test('email obrigatório, válido, único; acesso é imposto no servidor e falha
   assert.equal((await mutate('PATCH', `/api/deliverers/${success.body.entregador.id}`, { senhaInicial: 'troca' })).response.status, 400);
 });
 
+test('cadastro de entregador aceita e normaliza e-mail ausente, nulo, vazio e espaços', async () => {
+  cookie = ''; await login('admin@example.com');
+  const base = { endereco: 'Rua sem e-mail', senhaInicial: 'sememail1' };
+  for (const [nome, emailValue, includeEmail] of [
+    ['Sem Email A', undefined, false], ['Sem Email B', null, true], ['Sem Email C', '   ', true], ['Sem Email D', '', true],
+  ]) {
+    const body = { ...base, nome, ...(includeEmail ? { email: emailValue } : {}) };
+    const result = await mutate('POST', '/api/deliverers', body);
+    assert.equal(result.response.status, 201); assert.equal(result.body.entregador.email, null);
+    const account = users.find((user) => user.id === result.body.entregador.usuario_id);
+    assert.equal(account.email, null); assert.equal(account.acesso, 'entregador');
+  }
+  assert.equal((await mutate('POST', '/api/deliverers', { ...base, nome: 'Email Inválido', email: 'nao-e-email' })).response.status, 400);
+  cookie = ''; const nameLogin = await login('Sem Email A', 'sememail1');
+  assert.equal(nameLogin.response.status, 200); assert.equal(nameLogin.body.usuario.email, null); assert.equal(nameLogin.body.usuario.acesso, 'entregador');
+});
+
 test('consulta, pesquisa, atualiza campos e trata IDs inválidos/inexistentes', async () => {
   cookie = ''; await login('admin@example.com');
   const detail = await request('/api/deliverers/1'); assert.equal(detail.response.status, 200); assert.equal(detail.body.entregador.numero, '15');
@@ -158,12 +176,17 @@ test('consulta, pesquisa, atualiza campos e trata IDs inválidos/inexistentes', 
   assert.equal(users.find((user) => user.id === records.find((record) => record.id === 1).usuario_id).email, 'maria@example.com');
   const updated = await mutate('PATCH', '/api/deliverers/1', { email: 'maria@example.com', numero: '22', quadra: 'Q9' });
   assert.equal(updated.response.status, 200); assert.equal(updated.body.entregador.numero, '22'); assert.equal(updated.body.entregador.quadra, 'Q9');
+  const unchangedEmail = await mutate('PATCH', '/api/deliverers/1', { numero: '23' });
+  assert.equal(unchangedEmail.response.status, 200); assert.equal(unchangedEmail.body.entregador.email, 'maria@example.com');
   const addressUpdate = await mutate('PATCH', '/api/deliverers/1', { email: 'maria@example.com', cidade: 'Campinas', estado: 'mg' });
   assert.equal(addressUpdate.body.entregador.cidade, 'Campinas'); assert.equal(addressUpdate.body.entregador.estado, 'MG');
   assert.equal((await mutate('PATCH', '/api/deliverers/1', { cpf: '123' })).response.status, 400);
   const privilegeAttempt = await mutate('PATCH', '/api/deliverers/1', { email: 'maria@example.com', nome: 'Não permitido', acesso: 'administrador' });
   assert.equal(privilegeAttempt.response.status, 200);
   assert.equal(users.find((user) => user.id === privilegeAttempt.body.entregador.usuario_id).acesso, 'entregador');
+  const clearEmail = await mutate('PATCH', '/api/deliverers/1', { email: '   ' });
+  assert.equal(clearEmail.response.status, 200); assert.equal(clearEmail.body.entregador.email, null);
+  assert.equal(users.find((user) => user.id === clearEmail.body.entregador.usuario_id).email, null);
 });
 
 test('pesquisa de entregadores limita os resultados e não retorna dados internos de usuários', async () => {
@@ -185,7 +208,7 @@ test('exclusão exige sessão, valida ID, preserva referências e trata falhas d
   const csrfToken = (await request('/api/auth/csrf')).body.csrfToken;
   assert.equal((await request('/api/deliverers/1', { method: 'DELETE', headers: { 'X-CSRF-Token': csrfToken } })).response.status, 401);
 
-  await login('admin@example.com');
+  assert.equal((await login('admin@example.com')).response.status, 200);
   assert.equal((await request('/api/deliverers/1', { method: 'DELETE' })).response.status, 403);
   assert.equal((await mutate('DELETE', '/api/deliverers/invalido')).response.status, 400);
   assert.equal((await mutate('DELETE', '/api/deliverers/999')).response.status, 404);
