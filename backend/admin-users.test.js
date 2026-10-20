@@ -108,12 +108,12 @@ test('edição de usuário aceita e normaliza e-mail ausente, nulo, vazio e espa
   assert.equal((await request('/api/usuarios')).response.status, 403);
 });
 
-test('senha administrativa aceita 1 a 10 caracteres, rejeita vazia/11 e salva com bcrypt', async () => {
+test('senha administrativa aceita 1 a 100 caracteres, rejeita vazia/101 e salva com bcrypt', async () => {
   cookie = ''; await login('admin@example.com');
-  for (const senha of ['', '12345678901']) {
+  for (const senha of ['', '1'.repeat(101)]) {
     const rejected = await patch('/api/usuarios/2/password', { novaSenha: senha });
     assert.equal(rejected.response.status, 400);
-    assert.match(rejected.body.erro, /1 a 10 caracteres/);
+    assert.match(rejected.body.erro, /1 a 100 caracteres/);
   }
   for (const senha of ['x', '1234567890']) {
     const changed = await patch('/api/usuarios/2/password', { novaSenha: senha });

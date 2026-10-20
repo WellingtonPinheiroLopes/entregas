@@ -128,7 +128,7 @@ test('e-mail opcional e válido quando informado; acesso é imposto no servidor 
   assert.equal((await mutate('POST', '/api/deliverers', { ...payload, email: 'invalido' })).response.status, 400);
   assert.equal((await mutate('POST', '/api/deliverers', { ...payload, email: 'sem-senha@example.com' })).response.status, 400);
   assert.equal((await mutate('POST', '/api/deliverers', { ...payload, email: 'curta@example.com', senhaInicial: '' })).response.status, 400);
-  assert.equal((await mutate('POST', '/api/deliverers', { ...payload, email: 'longa@example.com', senhaInicial: '12345678901' })).response.status, 400);
+  assert.equal((await mutate('POST', '/api/deliverers', { ...payload, email: 'longa@example.com', senhaInicial: '1'.repeat(101) })).response.status, 400);
   const duplicate = await mutate('POST', '/api/deliverers', { ...payload, email: ' ADMIN@example.com ', senhaInicial: 'primeiro1' });
   assert.equal(duplicate.response.status, 409);
   const beforeUsers = users.length; const beforeDeliverers = records.length;
